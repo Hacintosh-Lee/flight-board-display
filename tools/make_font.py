@@ -10,8 +10,12 @@
 要用到哪些汉字, 从 make_fb_gbk.py 生成的 include/fb_gbk.h 里读(每行末尾的注释就是原文),
 所以只要有 fb_gbk.h 就能生成, 不需要 assets 里那些原始数据。
 
-字体用的是 macOS 自带的冬青黑体 / Menlo / DIN Condensed / Thonburi, 所以本脚本只能在 Mac 上跑;
-这些字体不能随仓库分发, fb_font.h 也就不进仓库, 编译 TFT 版之前先在 Mac 上跑一次本脚本。
+字体全用开源字体(SIL Open Font License), 先运行 tools/fetch_fonts.sh 下载到 assets/fonts/:
+  Noto Sans SC(汉字) / Noto Sans Mono(时间、航班号) / Barlow Condensed(英文地名) / Noto Sans Thai Looped(泰文)
+生成的 fb_font.h 随仓库分发(OFL 允许把字体嵌进软件里一起发布)。
+
+    python3 tools/make_font.py        # 开源字体(默认)
+    python3 tools/make_font.py mac    # 改用 macOS 自带字体(冬青黑体 / Menlo / DIN / Thonburi), 只在 Mac 上可用, 只供对比
 """
 import os
 import sys
@@ -32,8 +36,50 @@ def used_text():
             out.append(m.group(1))
     return "".join(out)
 
-HEI = "/System/Library/Fonts/Hiragino Sans GB.ttc"   # index 0 = W3, 2 = W6
-MONO = "/System/Library/Fonts/Menlo.ttc"             # index 0 = Regular, 1 = Bold
+FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "fonts")
+MAC = "mac" in sys.argv[1:]
+
+# 每种用途: (开源字体文件, 可变轴取值) / (macOS 字体文件, ttc 序号)
+FONTS = {
+    "hz12":   (("NotoSansSC[wght].ttf", {"Weight": 400}), ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0)),
+    "hz16":   (("NotoSansSC[wght].ttf", {"Weight": 600}), ("/System/Library/Fonts/Hiragino Sans GB.ttc", 2)),
+    "mono":   (("NotoSansMono[wdth,wght].ttf", {"Weight": 500, "Width": 100}), ("/System/Library/Fonts/Menlo.ttc", 0)),
+    "mono32": (("NotoSansMono[wdth,wght].ttf", {"Weight": 700, "Width": 100}), ("/System/Library/Fonts/Menlo.ttc", 1)),
+    "latin":  (("BarlowCondensed-SemiBold.ttf", {}), ("/System/Library/Fonts/Supplemental/DIN Condensed Bold.ttf", 0)),
+    "thai":   (("NotoSansThaiLooped[wdth,wght].ttf", {"Weight": 450, "Width": 100}),
+               ("/System/Library/Fonts/Supplemental/Thonburi.ttc", 0)),
+}
+# 开源字体和 macOS 字体的字面大小不一样, 按用途各给一个像素大小和基线(都是看效果图调出来的)
+# 键: (用途, 字号) -> (像素大小, 基线)
+METRICS = {
+    False: {("hz", 12): (12, 10.6), ("hz", 16): (15, 13.8),
+            ("asc", 12): (10, 9.6), ("asc", 16): (13, 12.6), ("asc", 32): (26, 25.4),
+            ("lat", 16): (17, 13.0), ("lat", 12): (14, 10.2),
+            ("th", 16): (13, 15.0), ("th", 12): (10, 12.0)},
+    True: {("hz", 12): (12, 10.4), ("hz", 16): (15, 13.6),
+           ("asc", 12): (10, 9.6), ("asc", 16): (13, 12.6), ("asc", 32): (26, 25.4),
+           ("lat", 16): (17, 13), ("lat", 12): (13, 10),
+           ("th", 16): (13, 15.0), ("th", 12): (10, 12.0)},
+}
+
+
+def font(kind, px):
+    (oss, axes), (macpath, idx) = FONTS[kind]
+    if MAC:
+        return ImageFont.truetype(macpath, px, index=idx)
+    path = os.path.join(FONT_DIR, oss)
+    if not os.path.exists(path):
+        sys.exit("缺字体 %s: 先运行 bash tools/fetch_fonts.sh" % path)
+    f = ImageFont.truetype(path, px)
+    if axes:
+        names = [a["name"].decode() if isinstance(a["name"], bytes) else a["name"] for a in f.get_variation_axes()]
+        defaults = [a["default"] for a in f.get_variation_axes()]
+        f.set_variation_by_axes([axes.get(n, d) for n, d in zip(names, defaults)])
+    return f
+
+
+def metric(kind, size):
+    return METRICS[MAC][(kind, size)]
 
 
 def render(ch, font, w, h, baseline):
@@ -60,15 +106,15 @@ def c_array(name, data):
 # ---------------- 英文单词 ----------------
 # 地名、状态这些英文单词用窄体无衬线字(DIN Condensed Bold, 机场指示牌常见的那类), 按字母实际宽度排,
 # 比等宽的 Menlo 好认, 也放得下更长的地名。没有小写字母的(时间、航班号、三字码)仍用等宽字, 保证对齐。
-LATIN = "/System/Library/Fonts/Supplemental/DIN Condensed Bold.ttf"
 LAT_GW = {16: 12, 12: 10}
 
 
 def latin():
     lines = ["", "// 英文单词用的窄体: 95 个字符(0x20..0x7E), 字模宽 FB_LATx_GW, 高 = 字号; FB_LATx_ADV 字宽",
              "#define FB_LAT_GW16 %d" % LAT_GW[16], "#define FB_LAT_GW12 %d" % LAT_GW[12]]
-    for size, px, base in ((16, 17, 13), (12, 13, 10)):
-        f = ImageFont.truetype(LATIN, px)
+    for size in (16, 12):
+        px, base = metric("lat", size)
+        f = font("latin", px)
         gw = LAT_GW[size]
         cells, adv = [], []
         for c in range(0x20, 0x7F):
@@ -93,7 +139,6 @@ def latin():
 #   声调跟在上方元音后面时整体抬高一层(另存一套, 序号 91 起)。
 # 泰文比汉字高: 每个字模 TH_H = 字号 + 4 行, 画的时候往上多占 3 行, 空行不画。
 # 编码 TIS-620: 字节 = 码位 - 0x0E00 + 0xA0; 序号 = 字节 - 0xA1 (0..90)。
-THAI = "/System/Library/Fonts/Supplemental/Thonburi.ttc"
 TH_MARKS = [0x0E31] + list(range(0x0E34, 0x0E3B)) + list(range(0x0E47, 0x0E4F))
 TH_HIGH = list(range(0x0E48, 0x0E4D))
 TH_GW = {16: 12, 12: 10}       # 字模宽
@@ -115,21 +160,30 @@ def thai():
     lines = ["", "// 泰文: 91 个码位(U+0E01..0E5B) + 5 个高位声调。字模宽 FB_TH_GW, 高 字号+4(上面多 3 行);",
              "// FB_THx_ADV: 字宽(符号为 0); FB_THx_INK: 墨迹右边缘(叠加符号时对齐用)",
              "#define FB_TH_N 96", "#define FB_TH_GW16 %d" % TH_GW[16], "#define FB_TH_GW12 %d" % TH_GW[12]]
-    for size, px, base in ((16, 13, 15.0), (12, 10, 12.0)):
-        f = ImageFont.truetype(THAI, px, index=0)
+    for size in (16, 12):
+        px, base = metric("th", size)
+        f = font("thai", px)
         gw, h = TH_GW[size], size + 4
         cells, adv, ink = [], [], []
         for cp in list(range(0x0E01, 0x0E5C)) + TH_HIGH:
             high = len(cells) >= 91
-            big = Image.new("L", (gw + 8, h), 0)
-            ImageDraw.Draw(big).text((0, base - (TH_LIFT[size] if high else 0)), chr(cp), font=f, fill=255, anchor="ls")
+            mark = cp in TH_MARKS
+            # 有的字体把上下符号画在原点左边(靠前一个字母去叠), 所以符号先画在宽画布中间,
+            # 再把墨迹平移到字模最左边; 叠加时固件按墨迹右边缘(INK)对齐前一个字母
+            ox = gw + 8 if mark else 0
+            big = Image.new("L", (gw + 8 + 2 * ox, h), 0)
+            ImageDraw.Draw(big).text((ox, base - (TH_LIFT[size] if high else 0)), chr(cp), font=f, fill=255, anchor="ls")
+            if mark and big.getbbox():
+                l, _, r, _ = big.getbbox()
+                shifted = Image.new("L", (gw + 8, h), 0)
+                shifted.paste(big.crop((l, 0, r, h)), (0, 0))
+                big = shifted
             bb = big.getbbox()
             right = bb[2] if bb else 0
             if right > gw:  # 太宽的字母(ฒ ฌ 之类)横向压进字模
                 big = big.crop((0, 0, right, h)).resize((gw, h), Image.LANCZOS)
                 right = gw
             cell = big.crop((0, 0, gw, h))
-            mark = cp in TH_MARKS
             cells.append(pack4(cell))
             adv.append(0 if mark else min(gw, round(f.getlength(chr(cp)))))
             ink.append(right)
@@ -148,17 +202,19 @@ def main():
     codes = [int.from_bytes(c.encode("gbk"), "big") for c in hanzi]
     out.append("#define FB_HZ_N %d" % len(hanzi))
     out.append("static const uint16_t FB_HZ_CODE[] PROGMEM = {%s};" % ",".join("0x%04X" % c for c in codes))
-    for size, idx, px, base in ((12, 0, 12, 10.4), (16, 2, 15, 13.6)):
-        f = ImageFont.truetype(HEI, px, index=idx)
+    for size in (12, 16):
+        px, base = metric("hz", size)
+        f = font("hz%d" % size, px)
         out.append(c_array("FB_HZ%d" % size, b"".join(render(c, f, size, size, base) for c in hanzi)))
     # ASCII
-    for size, idx, px, base in ((12, 0, 10, 9.6), (16, 0, 13, 12.6), (32, 1, 26, 25.4)):
-        f = ImageFont.truetype(MONO, px, index=idx)
+    for size in (12, 16, 32):
+        px, base = metric("asc", size)
+        f = font("mono32" if size == 32 else "mono", px)
         out.append(c_array("FB_ASC%d" % size,
                            b"".join(render(chr(c), f, size // 2, size, base) for c in range(0x20, 0x7F))))
     out += latin()
     out += thai()
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "include", "fb_font.h")
+    path = os.environ.get("FB_FONT_OUT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "include", "fb_font.h")
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(out) + "\n")
     print("wrote %s: %d hanzi, %d KB" % (os.path.normpath(path), len(hanzi), os.path.getsize(path) // 1024))

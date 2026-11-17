@@ -61,22 +61,33 @@ openscad -D 'part="lid"'   -o lid.stl   case/flightboard_case.scad
 
 ## 编译和烧录
 
-需要 [PlatformIO](https://platformio.org)。
+需要 [PlatformIO](https://platformio.org)，Mac / Windows / Linux 都可以。
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install platformio pyserial pillow
 ```
 
-### 1. 生成字库（仅彩屏版需要，只能在 Mac 上做）
+### 字库
 
-彩屏没有内置字库，固件里的中文/英文/泰文点阵是用 macOS 自带字体（冬青黑体、Menlo、DIN Condensed、Thonburi）渲染出来的。这些字体不能随仓库分发，所以 `include/fb_font.h` 不在仓库里，第一次编译前在 Mac 上生成一次：
+彩屏没有内置字库，固件里的中文/英文/泰文点阵（`include/fb_font.h`）是用开源字体渲染好、随仓库附带的，直接编译即可：
+
+| 用途 | 字体 |
+|---|---|
+| 中文 | [Noto Sans SC](https://fonts.google.com/noto/specimen/Noto+Sans+SC) |
+| 时间、航班号 | [Noto Sans Mono](https://fonts.google.com/noto/specimen/Noto+Sans+Mono) |
+| 英文地名 | [Barlow Condensed](https://fonts.google.com/specimen/Barlow+Condensed) |
+| 泰文 | [Noto Sans Thai Looped](https://fonts.google.com/noto/specimen/Noto+Sans+Thai+Looped) |
+
+都是 SIL Open Font License，许可证全文在 `licenses/fonts/`。改了界面文字或想换字体时重新生成：
 
 ```bash
-.venv/bin/python tools/make_font.py
+bash tools/fetch_fonts.sh                 # 下载字体到 assets/fonts/
+.venv/bin/python tools/make_font.py       # 生成 include/fb_font.h
+.venv/bin/python tools/font_specimen.py include/fb_font.h specimen.png   # 不接屏幕也能看效果图
 ```
 
-### 2. 航司标志（可选）
+### 航司标志（可选）
 
 航司标志是各航司的商标，不随仓库分发。没有标志时固件照样能编译，航班行里用彩色徽章（航司两字码）代替。想要标志的话：
 
@@ -86,7 +97,15 @@ git clone --depth 1 https://github.com/Jxck-S/airline-logos.git assets/jxck
 .venv/bin/python tools/make_logos.py      # 生成 include/fb_logos.h
 ```
 
-### 3. 烧录
+### 烧录
+
+不想自己编译的话，到 [Releases](../../releases) 下载编译好的固件，用 [ESP 网页烧录工具](https://espressif.github.io/esptool-js/) 或 esptool 写到地址 `0x0`：
+
+```bash
+esptool.py --chip esp32c3 write_flash 0x0 flightboard_tft-merged.bin
+```
+
+自己编译：
 
 ```bash
 .venv/bin/pio run -e flightboard_tft -t upload    # 2.4 寸彩屏版
@@ -152,4 +171,4 @@ python3 tools/make_font.py
 
 ## 许可证
 
-代码以 [MIT](LICENSE) 许可证开源。航司标志、字体和第三方数据不在此许可证范围内，以各自的条款为准。
+代码以 [MIT](LICENSE) 许可证开源。字库由 SIL Open Font License 字体生成（见 `licenses/fonts/`）。航司标志和第三方数据不在此许可证范围内，以各自的条款为准。

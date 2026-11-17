@@ -8,12 +8,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 
-// 字库用 macOS 自带字体渲染, 不能随仓库分发: 编译 TFT 版前先在 Mac 上跑 tools/make_font.py
-#if __has_include("fb_font.h")
-#include "fb_font.h"
-#else
-#error "缺 include/fb_font.h: 先在 Mac 上运行 python3 tools/make_font.py 生成字库(见 README)"
-#endif
+#include "fb_font.h"  // tools/make_font.py 用开源字体生成, 随仓库分发
 // 航司标志是各航司的商标, 不进仓库; 想要的话运行 tools/make_logos.py 自己生成。
 // 没有的时候固件照样能编译, 航班行里用彩色徽章(航司两字码)代替标志。
 #if __has_include("fb_logos.h")
