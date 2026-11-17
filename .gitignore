@@ -21,3 +21,4 @@ include/fb_logos.h
 flightboard_host/airport.txt
 spi_tests_unused/
 flightboard_host/boards.json
+include/fb_scr_logos.h

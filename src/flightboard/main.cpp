@@ -256,6 +256,21 @@ static void scrRx(char c) {
 }
 
 static bool scr(const String &line, uint32_t timeoutMs = 700) {
+#ifndef DISPLAY_TFT
+  // 串口屏一行命令最多 1024 字节: 长内容(航司标志)在里面用换行分段, 这里拆开一段段发、各等一次 OK
+  int nl = line.indexOf('\n');
+  if (nl >= 0) {
+    bool ok = true;
+    int from = 0;
+    while (from <= (int)line.length()) {
+      int to = line.indexOf('\n', from);
+      if (to < 0) to = line.length();
+      if (to > from) ok = scr(line.substring(from, to), timeoutMs) && ok;
+      from = to + 1;
+    }
+    return ok;
+  }
+#endif
   if (mirror) {
     Serial.print("$S,");
     Serial.write((const uint8_t *)line.c_str(), line.length());
@@ -539,6 +554,34 @@ static void statusStyle(const Flight *f, int &bg, int &fg, char *text, size_t n)
   }
 }
 
+// ---------- 串口屏的航司标志(tools/make_scr_logos.py 生成, 本地有才编进去) ----------
+#if !defined(DISPLAY_TFT) && __has_include("fb_scr_logos.h")
+#include "fb_scr_logos.h"
+#define HAVE_SCR_LOGOS 1
+static int scrLogoFind(const char *code) {
+  for (int i = 0; i < FB_SL_N; i++)
+    if (pgm_read_byte(&FB_SL_CODE[i * 2]) == code[0] && pgm_read_byte(&FB_SL_CODE[i * 2 + 1]) == code[1]) return i;
+  return -1;
+}
+// 第 row 行的标志: 这行专用 4 个调色板号(32 + 4*row 起), 先设颜色, 再铺圆角底, 再一层层盖矩形。
+// 前后和每 30 个矩形插一个换行, scr() 按换行拆成多条命令发(每条不超过屏幕的 1024 字节)
+static String scrLogoCmd(int row, int x, int y, int idx) {
+  int base = 32 + 4 * row;
+  String s = "\n";
+  for (int k = 0; k < 4; k++) s += cmd("SCC(%d,%u);", base + k, (unsigned)pgm_read_word(&FB_SL_PAL[idx * 4 + k]));
+  s += cmd("CBOF(%d,%d,%d,%d,3,%d);", x, y, x + 21, y + 16, base);
+  uint16_t start = pgm_read_word(&FB_SL_IDX[idx * 2]), n = pgm_read_word(&FB_SL_IDX[idx * 2 + 1]);
+  for (int i = 0; i < n; i++) {
+    const uint8_t *p = FB_SL_RECT + (size_t)(start + i) * 3;
+    uint32_t v = pgm_read_byte(p) | (pgm_read_byte(p + 1) << 8) | ((uint32_t)pgm_read_byte(p + 2) << 16);
+    int rx = v & 31, ry = (v >> 5) & 31, w = ((v >> 10) & 31) + 1, h = ((v >> 15) & 31) + 1, c = (v >> 20) & 3;
+    if (i && i % 30 == 0) s += "\n";
+    s += cmd("BOXF(%d,%d,%d,%d,%d);", x + rx, y + ry, x + rx + w - 1, y + ry + h - 1, base + c);
+  }
+  return s + "\n";
+}
+#endif
+
 static String rowCmd(int row, int kind, const Flight *f) {
   int y = ROW_Y0 + row * ROW_H;
   int band = row % 2 ? C_ROW_B : C_ROW_A;
@@ -556,8 +599,15 @@ static String rowCmd(int row, int kind, const Flight *f) {
 #ifdef DISPLAY_TFT
     lg = tft::findLogo(code);  // 彩屏有真图标就用图标, 没有的航司还是彩色徽章
 #endif
+#ifdef HAVE_SCR_LOGOS
+    lg = scrLogoFind(code);
+#endif
     if (lg >= 0) {
+#ifdef HAVE_SCR_LOGOS
+      s += scrLogoCmd(row, X_BADGE, y + 2, lg);
+#else
       s += cmd("LOGO(%d,%d,%d);", X_BADGE, y + 2, lg);
+#endif
     } else {
       s += cmd("CBOF(%d,%d,%d,%d,3,%d);", X_BADGE, y + 2, X_BADGE + 21, y + 18, bbg);
       s += cmd("BOXF(%d,%d,%d,%d,%d);SBC(%d);", X_BADGE + 3, y + 15, X_BADGE + 18, y + 16, bst, bbg);
