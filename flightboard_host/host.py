@@ -251,6 +251,18 @@ def ask(ser, line, prefix, timeout=2.0):
 # 问过、确认不是航班牌的板子(按 USB 序列号即 MAC 记): 拔掉之前不再去碰。
 # 这种板子每打开一次串口就可能被复位一次, 每 5 秒探一回的话它就没法正常跑了(比如电波水族箱)。
 NOT_BOARDS = set()
+# 认出过的航班牌(MAC)记在 boards.json: 这些板子刚上电时可能正忙着自己联网取数, 一时不回话,
+# 不能因此当成"不是航班牌"拉黑, 只是下一轮再问
+KNOWN_FILE = os.path.join(_HERE, "boards.json")
+
+
+def known_boards():
+    return set(load_json(KNOWN_FILE, []))
+
+
+def remember_board(sn):
+    if sn and sn not in known_boards():
+        save_json(KNOWN_FILE, sorted(known_boards() | {sn}))
 
 
 def open_board():
@@ -271,9 +283,10 @@ def open_board():
         for _ in range(3):  # 刚上电时板子可能还在启动
             ident = ask(ser, "$?", "$ID,flightboard", 1.5)
             if ident:
+                remember_board(sn.get(dev))
                 return ser, dev, ident
         ser.close()
-        if not forced and sn.get(dev):
+        if not forced and sn.get(dev) and sn[dev] not in known_boards():
             NOT_BOARDS.add(sn[dev])
             log("%s 不是航班牌(%s), 拔掉之前不再探测" % (dev, sn[dev]))
     return None, None, None

@@ -20,3 +20,4 @@ include/fb_logos.h
 # 个人设置 / 运行时数据
 flightboard_host/airport.txt
 spi_tests_unused/
+flightboard_host/boards.json
