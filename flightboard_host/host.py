@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """航班牌电脑端: 联网取机场航班, 经 USB 推给屏幕。
 
-机场: 在屏幕上触摸更换, 或运行 host.py airport XXX; 电脑端会跟着屏幕走(记在 airport.txt)。
+机场: 以电脑上选的为准(记在 airport.txt): 板子插上时, 它里面存的机场会被改成电脑上的。
+在串口屏上触摸换机场时, 电脑跟着换。
 
     host.py            常驻: 每 140 分钟取数, 每分钟推一次(顺带对时)
     host.py once       取一次、推一次就退出
@@ -490,10 +491,12 @@ def run(once=False):
                     continue
                 log("已连接 %s  %s" % (dev, ident))
                 BOARD["tft"] = ",tft=1" in ident
-                # 机场以屏幕为准(屏上触摸换过的话跟着走); 除非控制页面刚选了一个还没发下去
-                if not want and set_airport(board_airport(ident)):
-                    log("屏幕上的机场是 %s, 跟着换" % AIRPORT)
-                    cache, last_fetch = load_cache()  # 上次就是这个机场且数据还新的话接着用, 不重复取
+                # 机场以电脑为准: 板子里存的(可能是很久以前的)机场和电脑上的不一样, 就改成电脑上的。
+                # 几块板子轮流插拔时, 不会因为某块板子存着旧机场把电脑的设置改掉、白扣额度
+                was = board_airport(ident)
+                if not want and was and was != AIRPORT:
+                    want = AIRPORT
+                    log("屏幕里存的是 %s, 改成电脑上的 %s" % (was, AIRPORT))
             if want:
                 ser.write(("$A,%s\n" % want).encode())
                 if set_airport(want):
