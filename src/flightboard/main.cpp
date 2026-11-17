@@ -330,9 +330,11 @@ static void sendPalette() {
   if (s.length()) scr(s);
 }
 
+static int scrDir = SCR_DIR;  // 串口屏方向: -1 用屏幕自己存的; 0 横屏; 2 横屏倒立($O 设置, 存 flash)
+
 static void screenInit() {
   for (int i = 0; i < 5; i++) {
-    String s = SCR_DIR >= 0 ? cmd("DR%d;", SCR_DIR) : String();
+    String s = scrDir >= 0 ? cmd("DR%d;", scrDir) : String();
     s += "CLS(0);";
     if (scr(s, 1000)) break;
     delay(400);
@@ -1721,15 +1723,19 @@ static void handleLine(char *line) {
     Serial.printf("$X,%c,%d,pw=%d\n", w, v, (int)WiFi.getTxPower());
   } else if (c == 'Z') {
     ESP.restart();
-#ifdef DISPLAY_TFT
   } else if (c == 'O') {
     // 屏幕倒着装的话转 180 度: $O,0 / $O,1, 存 flash
     uint8_t r = (uint8_t)(atoi(nextField(&p)) & 1);
     prefs.putUChar("rot", r);
+#ifdef DISPLAY_TFT
     tft::setRotation(r);
+#else
+    scrDir = r ? 2 : 0;
+    screenInit();
+#endif
     needCls = true;
     dirty = true;
-#endif
+    Serial.printf("$OK,O,%d\n", r);
   } else if (c == 'G') {
     // 立刻走一轮 WiFi 取数(测试用, 扣 2 次额度)
     lastUsbMs = 0;
@@ -1821,6 +1827,7 @@ void setup() {
   tft::begin(prefs.getUChar("rot", 0));
 #else
   Serial1.begin(SCR_BAUD, SERIAL_8N1, SCR_RX, SCR_TX);
+  if (prefs.isKey("rot")) scrDir = prefs.getUChar("rot", 0) ? 2 : 0;
   delay(1200);  // 屏幕上电比 ESP 慢
 #endif
   screenInit();
