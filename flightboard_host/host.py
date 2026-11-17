@@ -27,7 +27,7 @@ import subprocess
 import sys
 import time
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 
 import serial
 import serial.tools.list_ports
@@ -146,6 +146,14 @@ def pick(rows):
     return [r[2] for r in keep]
 
 
+def utc_epoch(s):
+    """'2026-11-17 08:05'(UTC) -> 秒数; 没有就 0"""
+    try:
+        return int(datetime.strptime(s, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc).timestamp())
+    except (TypeError, ValueError):
+        return 0
+
+
 def fetch_airlabs(kind):
     """AirLabs: 全球机场都有, 但免费档每月只有 1000 次, 所以更新得慢(见 fetch_every)。"""
     if not airlabs_key():
@@ -156,7 +164,10 @@ def fetch_airlabs(kind):
     # 所以按状态要: 出发只要还没走的(scheduled); 到达要还没起飞的 + 已经在天上的(active)。
     flights = []
     for status in (("scheduled",) if kind == "D" else ("scheduled", "active")):
-        url = "%s?%s_iata=%s&status=%s&api_key=%s" % (AIRLABS_API, me, AIRPORT, status, airlabs_key())
+        # _fields: 只要用得到的字段, 响应小好几倍(加了它就不再给 *_ts 时间戳, 时间从 UTC 字符串算)
+        fields = ",".join(["flight_iata", "cs_flight_iata", "status", other + "_iata"] +
+                          [me + k for k in ("_delayed", "_terminal", "_time", "_time_utc", "_estimated_utc")])
+        url = "%s?%s_iata=%s&status=%s&_fields=%s&api_key=%s" % (AIRLABS_API, me, AIRPORT, status, fields, airlabs_key())
         req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=30) as r:
             data = json.load(r)
@@ -179,10 +190,10 @@ def fetch_airlabs(kind):
     for f in flights:
         if f.get("cs_flight_iata"):
             continue  # 代码共享的重复行: 同一架飞机挂了别家的航班号, 只留实际承运的那条
-        sched = int(f.get(me + "_time_ts") or 0)
+        sched = utc_epoch(f.get(me + "_time_utc"))
         if not sched or not f.get(other + "_iata") or not f.get("flight_iata"):
             continue
-        est = int(f.get(me + "_estimated_ts") or 0)
+        est = utc_epoch(f.get(me + "_estimated_utc"))
         late = int(f.get(me + "_delayed") or 0)
         raw = (f.get("status") or "").lower()
         if raw == "cancelled":

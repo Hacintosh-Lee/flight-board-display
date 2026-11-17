@@ -173,7 +173,10 @@ static void webSave() {
   String apt = web.arg("apt");
   apt.trim();
   apt.toUpperCase();
-  if (apt.length() == 3) setAirport(apt.c_str());
+  if (apt.length() == 3 && apt != airport) {
+    setAirport(apt.c_str());
+    Serial.printf("$AP,%s\n", airport);  // 插着电脑的话, 让电脑跟着换, 由它马上取新机场的数据
+  }
   String key = web.arg("key");
   key.trim();
   if (key.length() && key != alKey) {

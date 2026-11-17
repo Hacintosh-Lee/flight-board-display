@@ -190,6 +190,7 @@ static uint8_t nameLang = 0;   // 屏幕语种: 0 中文 / 1 英文 / 2 泰文(�
 static bool ntpStarted = false;
 static uint32_t lastUsbMs = 0, nextFetchMs = 0;
 static uint32_t lastUsbDataMs = 0;
+static uint32_t usbSinceMs = 0;     // 这次电脑连上(开始发 $T)的时间
 static bool retryOnly[2] = {false, false};  // 上一轮失败、要单独补取的方向  // 电脑上一次真的推来航班数据的时间
 
 // ---------------- 时间 ----------------
@@ -737,9 +738,13 @@ static int netFails = 0;
 // 一次响应有一百多 KB, 经 TLS 分很多段到, 段与段之间会停顿。
 // 默认的流读取停 1 秒就当结束, JSON 会读到一半断掉; 这里只要连接还在就多等一会儿。
 struct SlowReader {
+  // 带 1 KB 缓冲: JSON 解析器是一个字一个字要的, 直接逐字节读 TLS 连接, 每个字节都要过一遍解密层,
+  // 一次 100 KB 的响应要几十秒。整块读进缓冲再一个个给, 快一个数量级。
   WiFiClient &c;
   uint32_t bytes = 0;  // 读到多少字节, 出错时带进诊断
   char why = '-';      // 为什么停: c 对方关了连接 / t 等太久
+  uint8_t buf[1024];
+  int pos = 0, len = 0;
   explicit SlowReader(WiFiClient &cl) : c(cl) {}
   bool wait() {
     uint32_t t0 = millis();
@@ -751,25 +756,31 @@ struct SlowReader {
     }
     return true;
   }
-  int read() {
+  bool fill() {
     // TLS 偶尔报"有数据"却读出 -1(记录还没解完): 再等等, 不能当成结束
     for (int i = 0; i < 50; i++) {
-      if (!wait()) return -1;
-      int v = c.read();
-      if (v >= 0) return bytes++, v;
+      if (!wait()) return false;
+      int r = c.read(buf, sizeof(buf));
+      if (r > 0) {
+        pos = 0, len = r, bytes += (uint32_t)r;
+        return true;
+      }
       delay(5);
     }
-    return -1;
+    return false;
+  }
+  int read() {
+    if (pos >= len && !fill()) return -1;
+    return buf[pos++];
   }
   size_t readBytes(char *b, size_t n) {
     // 要多少给多少: 少给了 JSON 解析器会以为数据到头了(IncompleteInput)
     size_t got = 0;
-    int misses = 0;
-    while (got < n && misses < 50) {
-      if (!wait()) break;
-      int r = c.read((uint8_t *)b + got, n - got);
-      if (r > 0) got += (size_t)r, bytes += (uint32_t)r, misses = 0;
-      else misses++, delay(5);
+    while (got < n) {
+      if (pos >= len && !fill()) break;
+      size_t k = min(n - got, (size_t)(len - pos));
+      memcpy(b + got, buf + pos, k);
+      pos += k, got += k;
     }
     return got;
   }
@@ -825,7 +836,11 @@ static int airlabsPart(int kind, const char *status, uint32_t now, int &total) {
   http.setUserAgent("flightboard-esp32/1.0");
   http.setTimeout(20000);
   // 这家的密钥只能放在网址参数里
-  String url = String(AIRLABS_URL) + "?" + me + "_iata=" + airport + "&status=" + status + "&api_key=" + alKey;
+  // _fields: 只要用得到的九个字段, 响应从 100 多 KB 降到 20 KB, WiFi 下载快很多。
+  // 注意加了 _fields 后 AirLabs 不再给 *_ts 时间戳, 时间从 UTC 时间字符串算
+  String url = String(AIRLABS_URL) + "?" + me + "_iata=" + airport + "&status=" + status +
+               "&_fields=flight_iata,cs_flight_iata,status," + other + "_iata," + me + "_delayed," + me +
+               "_terminal," + me + "_time," + me + "_time_utc," + me + "_estimated_utc" + "&api_key=" + alKey;
   if (!http.begin(cli, url)) {
     DIAG("begin");
     return FR_NET;
@@ -841,7 +856,7 @@ static int airlabsPart(int kind, const char *status, uint32_t now, int &total) {
   JsonObject ff = filter["response"][0].to<JsonObject>();
   for (const char *k : {"flight_iata", "cs_flight_iata", "status"}) ff[k] = true;
   ff[other + "_iata"] = true;
-  for (const char *k : {"_time_ts", "_estimated_ts", "_delayed", "_terminal", "_time", "_time_utc"}) ff[me + k] = true;
+  for (const char *k : {"_delayed", "_terminal", "_time", "_time_utc", "_estimated_utc"}) ff[me + k] = true;
 
   JsonDocument doc;
   SlowReader rd{http.getStream()};
@@ -880,8 +895,8 @@ static int airlabsPart(int kind, const char *status, uint32_t now, int &total) {
     if (cs[0]) continue;  // 代码共享的重复行: 只留实际承运的那条
     Flight f;
     memset(&f, 0, sizeof(f));
-    f.sched = o[me + "_time_ts"] | 0u;
-    uint32_t est = o[me + "_estimated_ts"] | 0u;
+    f.sched = parseYmdHm(o[me + "_time_utc"] | (const char *)nullptr);
+    uint32_t est = parseYmdHm(o[me + "_estimated_utc"] | (const char *)nullptr);
     f.est = est != f.sched ? est : 0;
     strlcpy(f.fn, o["flight_iata"] | "", sizeof(f.fn));
     strlcpy(f.iata, o[other + "_iata"] | "", sizeof(f.iata));
@@ -907,6 +922,7 @@ static int airlabsPart(int kind, const char *status, uint32_t now, int &total) {
 }
 
 static int fetchAirlabs(int kind) {
+  uint32_t fetchT0 = millis();
   uint32_t now = nowEpoch();
   staging.n = 0;
   staging.dataTime = now;
@@ -941,7 +957,7 @@ static int fetchAirlabs(int kind) {
     DIAG("airlabs empty of %d", total);
     return FR_EMPTY;
   }
-  DIAG("airlabs ok %d of %d heap %u", staging.n, total, (unsigned)ESP.getFreeHeap());
+  DIAG("airlabs ok %d of %d in %ums heap %u", staging.n, total, (unsigned)(millis() - fetchT0), (unsigned)ESP.getFreeHeap());
   commit(kind, true);
   return FR_OK;
 }
@@ -955,7 +971,7 @@ static void wifiStart() {
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
   ntpStarted = false;
   WiFi.setSleep(false);  // 省电模式下有的路由器会丢发给它的包
-  nextFetchMs = millis() + 10000;  // 连上后稍等: 电脑在线的话由它取数, 不白扣额度
+  nextFetchMs = millis() + 20000;  // 连上后稍等: 电脑在线的话它几秒内就会来对时, 由它取数, 不白扣额度
 }
 
 // 路由器自带的 DNS 时灵时不灵(电脑那边也遇到过解析失败), 域名查不到就整轮取数失败。
@@ -1001,9 +1017,12 @@ static void wifiTask() {
     ntpStarted = true;
   }
   // 电脑在线、而且它最近真推过数据: 取数归它管。电脑插着但自己断网取不到时, 板子照样自己取
-  if (lastUsbMs && millis() - lastUsbMs < USB_FRESH_MS && lastUsbDataMs &&
-      millis() - lastUsbDataMs < USB_DATA_FRESH_MS)
-    return;
+  // 插着电脑就走 USB: 电脑在线时一律不自己取, 哪怕它还没推来数据(刚连上、刚换机场, 它正在取)。
+  // 只有电脑连着却 150 分钟都没推来新数据(它自己断网了), 板子才接手。
+  if (lastUsbMs && millis() - lastUsbMs < USB_FRESH_MS) {
+    uint32_t since = lastUsbDataMs && lastUsbDataMs - usbSinceMs < 0x80000000UL ? lastUsbDataMs : usbSinceMs;
+    if (millis() - since < USB_DATA_FRESH_MS) return;
+  }
   if ((int32_t)(millis() - nextFetchMs) < 0) return;
   if (!nowEpoch()) {
     // 还没对上时, 分不出哪些航班已经走了; 等 NTP, 不扣额度。连上一分钟还没对上, 就是出不了外网: 重连
@@ -1613,6 +1632,7 @@ static void handleLine(char *line) {
         dirty = true;
       }
     }
+    if (!lastUsbMs || millis() - lastUsbMs >= USB_FRESH_MS) usbSinceMs = millis() | 1;  // 电脑刚连上
     lastUsbMs = millis() | 1;  // 电脑在线: 取数归它管, 屏幕不再自己走 WiFi 取(省额度)
   } else if (c == 'B') {
     stagingKind = *nextField(&p) == 'A' ? 1 : 0;
