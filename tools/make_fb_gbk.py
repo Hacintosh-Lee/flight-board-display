@@ -68,6 +68,11 @@ STRINGS = {
     "S_NONET": "没有找到 WiFi",
     "S_OPEN": "开放",
     "S_PICK_APT": "选择机场",
+    "S_APT_COMMON": "常用",
+    "S_APT_CODE": "输入三字码",
+    "S_CODE_HINT": "输入机场三字码 如 NRT",
+    "S_CODE_BAD": "没有这个机场",
+    "S_OK": "确定",
     "S_PICK_WIFI": "选择 WiFi",
     "S_PWD_HINT": "输入密码",
     "S_CONNECT": "连接",
@@ -335,6 +340,37 @@ def names_table():
     return out
 
 
+def region_table():
+    """触摸屏选机场用: 洲 -> 国家 -> 机场。分组同电脑端 countries.json, 国家按机场数排, 机场按规模排。"""
+    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "flightboard_host")
+    groups = json.load(open(os.path.join(here, "countries.json"), encoding="utf-8"))
+    apts = json.load(open(os.path.join(here, "airports.json"), encoding="utf-8"))
+    by_cc = {}
+    for a in apts:
+        by_cc.setdefault(a[3], []).append(a)
+    order, countries = [], []
+    for gi, (_, cs) in enumerate(groups):
+        cs = sorted(cs, key=lambda c: -len(by_cc.get(c[0], [])))  # 机场多的国家排前面
+        for cc, names in cs:
+            lst = sorted(by_cc.get(cc, []), key=lambda a: (a[6], a[7] or a[1]))
+            if not lst:
+                continue
+            countries.append((gi, names["zh"], len(order), len(lst)))
+            order += [a[0] for a in lst]
+    out = ["", "// 触摸屏选机场: 洲 -> 国家 -> 机场(按规模排)",
+           "static const char *const FB_REGION[] = {%s};" % ", ".join(c_str(g["zh"]) for g, _ in groups),
+           "#define FB_REGION_N %d" % len(groups),
+           "struct FbCountry { uint8_t region; const char *name; uint16_t first, n; };",
+           "static const FbCountry FB_COUNTRY[] = {"]
+    for gi, zh, first, n in countries:
+        out.append("  {%d, %s, %d, %d},  // %s" % (gi, c_str(zh), first, n, zh))
+    out += ["};", "#define FB_COUNTRY_N %d" % len(countries), "static const char FB_APT_ORDER[][4] = {"]
+    for i in range(0, len(order), 16):
+        out.append("  " + ", ".join('"%s"' % c for c in order[i:i + 16]) + ",")
+    out += ["};", ""]
+    return out
+
+
 def main():
     for item in AIRPORTS.replace("\n", "|").split("|"):
         item = item.strip()
@@ -384,6 +420,7 @@ def main():
         "",
     ]
     lines += names_table()
+    lines += region_table()
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "include", "fb_gbk.h")
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))

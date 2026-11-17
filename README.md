@@ -46,7 +46,7 @@ flightboard_host/airlabs_key.txt     # AirLabs 密钥, 一行
 
 ### UsartGPU 串口屏（可选）
 
-屏 RX ← GPIO21，屏 TX → GPIO20，5V 供电，38400 8N1。这一版支持触摸：点屏幕可以换机场、连 WiFi。
+屏 RX ← GPIO21，屏 TX → GPIO20，5V 供电，38400 8N1。这一版支持触摸：点屏幕可以连 WiFi、换机场（全球机场按洲和国家选，也可以直接输三字码），不接电脑也能单独用。
 
 ### 外壳
 

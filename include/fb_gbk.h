@@ -61,6 +61,11 @@ static const char S_SCANNING[] = "\325\375\324\332\313\321\313\367 WiFi ...";  /
 static const char S_NONET[] = "\303\273\323\320\325\322\265\275 WiFi";  // 没有找到 WiFi
 static const char S_OPEN[] = "\277\252\267\305";  // 开放
 static const char S_PICK_APT[] = "\321\241\324\361\273\372\263\241";  // 选择机场
+static const char S_APT_COMMON[] = "\263\243\323\303";  // 常用
+static const char S_APT_CODE[] = "\312\344\310\353\310\375\327\326\302\353";  // 输入三字码
+static const char S_CODE_HINT[] = "\312\344\310\353\273\372\263\241\310\375\327\326\302\353 \310\347 NRT";  // 输入机场三字码 如 NRT
+static const char S_CODE_BAD[] = "\303\273\323\320\325\342\270\366\273\372\263\241";  // 没有这个机场
+static const char S_OK[] = "\310\267\266\250";  // 确定
 static const char S_PICK_WIFI[] = "\321\241\324\361 WiFi";  // 选择 WiFi
 static const char S_PWD_HINT[] = "\312\344\310\353\303\334\302\353";  // 输入密码
 static const char S_CONNECT[] = "\301\254\275\323";  // 连接
@@ -7339,3 +7344,498 @@ static inline const char *fbPlace(const char *iata, int lang) {
   }
   return nullptr;
 }
+
+
+// 触摸屏选机场: 洲 -> 国家 -> 机场(按规模排)
+static const char *const FB_REGION[] = {"\326\320\271\372", "\321\307\326\336", "\305\267\326\336", "\261\261\303\300\326\336", "\304\317\303\300\326\336", "\264\363\321\363\326\336", "\267\307\326\336"};
+#define FB_REGION_N 7
+struct FbCountry { uint8_t region; const char *name; uint16_t first, n; };
+static const FbCountry FB_COUNTRY[] = {
+  {0, "\326\320\271\372", 0, 261},  // 中国
+  {0, "\326\320\271\372\314\250\315\345", 261, 13},  // 中国台湾
+  {0, "\326\320\271\372\317\343\270\333", 274, 1},  // 中国香港
+  {0, "\326\320\271\372\260\304\303\305", 275, 1},  // 中国澳门
+  {1, "\323\241\266\310\304\341\316\367\321\307", 276, 121},  // 印度尼西亚
+  {1, "\323\241\266\310", 397, 116},  // 印度
+  {1, "\310\325\261\276", 513, 83},  // 日本
+  {1, "\315\301\266\372\306\344", 596, 51},  // 土耳其
+  {1, "\322\301\300\312", 647, 45},  // 伊朗
+  {1, "\267\306\302\311\261\366", 692, 44},  // 菲律宾
+  {1, "\302\355\300\264\316\367\321\307", 736, 34},  // 马来西亚
+  {1, "\314\251\271\372", 770, 33},  // 泰国
+  {1, "\311\263\314\330\260\242\300\255\262\256", 803, 29},  // 沙特阿拉伯
+  {1, "\271\376\310\370\277\313\313\271\314\271", 832, 24},  // 哈萨克斯坦
+  {1, "\260\315\273\371\313\271\314\271", 856, 23},  // 巴基斯坦
+  {1, "\303\345\265\351", 879, 23},  // 缅甸
+  {1, "\324\275\304\317", 902, 22},  // 越南
+  {1, "\304\341\262\264\266\373", 924, 19},  // 尼泊尔
+  {1, "\272\253\271\372", 943, 15},  // 韩国
+  {1, "\302\355\266\373\264\372\267\362", 958, 15},  // 马尔代夫
+  {1, "\303\311\271\305", 973, 13},  // 蒙古
+  {1, "\316\332\327\310\261\360\277\313\313\271\314\271", 986, 13},  // 乌兹别克斯坦
+  {1, "\260\242\301\252\307\365", 999, 8},  // 阿联酋
+  {1, "\303\317\274\323\300\255\271\372", 1007, 8},  // 孟加拉国
+  {1, "\300\317\316\316", 1015, 7},  // 老挝
+  {1, "\313\271\300\357\300\274\277\250", 1022, 7},  // 斯里兰卡
+  {1, "\322\262\303\305", 1029, 7},  // 也门
+  {1, "\260\242\270\273\272\271", 1036, 6},  // 阿富汗
+  {1, "\260\242\310\373\260\335\275\256", 1042, 6},  // 阿塞拜疆
+  {1, "\274\355\306\322\325\257", 1048, 6},  // 柬埔寨
+  {1, "\315\301\277\342\302\374\313\271\314\271", 1054, 6},  // 土库曼斯坦
+  {1, "\322\301\300\255\277\313", 1060, 6},  // 伊拉克
+  {1, "\260\242\302\374", 1066, 5},  // 阿曼
+  {1, "\263\257\317\312", 1071, 4},  // 朝鲜
+  {1, "\266\253\265\333\343\353", 1075, 4},  // 东帝汶
+  {1, "\270\361\302\263\274\252\321\307", 1079, 4},  // 格鲁吉亚
+  {1, "\274\252\266\373\274\252\313\271\313\271\314\271", 1083, 4},  // 吉尔吉斯斯坦
+  {1, "\313\376\274\252\277\313\313\271\314\271", 1087, 4},  // 塔吉克斯坦
+  {1, "\320\360\300\373\321\307", 1091, 4},  // 叙利亚
+  {1, "\262\273\265\244", 1095, 3},  // 不丹
+  {1, "\310\373\306\326\302\267\313\271", 1098, 3},  // 塞浦路斯
+  {1, "\322\324\311\253\301\320", 1101, 3},  // 以色列
+  {1, "\324\274\265\251", 1104, 3},  // 约旦
+  {1, "\320\302\274\323\306\302", 1107, 2},  // 新加坡
+  {1, "\321\307\303\300\304\341\321\307", 1109, 2},  // 亚美尼亚
+  {1, "\260\315\301\326", 1111, 1},  // 巴林
+  {1, "\277\250\313\376\266\373", 1112, 1},  // 卡塔尔
+  {1, "\277\306\277\306\313\271\243\250\273\371\301\326\243\251\310\272\265\272", 1113, 1},  // 科科斯（基林）群岛
+  {1, "\277\306\315\376\314\330", 1114, 1},  // 科威特
+  {1, "\300\350\260\315\304\333", 1115, 1},  // 黎巴嫩
+  {1, "\312\245\265\256\265\272", 1116, 1},  // 圣诞岛
+  {1, "\316\304\300\263", 1117, 1},  // 文莱
+  {2, "\266\355\302\336\313\271", 1118, 148},  // 俄罗斯
+  {2, "\323\242\271\372", 1266, 53},  // 英国
+  {2, "\267\250\271\372", 1319, 49},  // 法国
+  {2, "\305\262\315\376", 1368, 46},  // 挪威
+  {2, "\316\367\260\340\321\300", 1414, 43},  // 西班牙
+  {2, "\322\342\264\363\300\373", 1457, 41},  // 意大利
+  {2, "\317\243\300\260", 1498, 39},  // 希腊
+  {2, "\265\302\271\372", 1537, 38},  // 德国
+  {2, "\310\360\265\344", 1575, 38},  // 瑞典
+  {2, "\267\322\300\274", 1613, 20},  // 芬兰
+  {2, "\306\317\314\321\321\300", 1633, 19},  // 葡萄牙
+  {2, "\302\336\302\355\304\341\321\307", 1652, 16},  // 罗马尼亚
+  {2, "\262\250\300\274", 1668, 15},  // 波兰
+  {2, "\265\244\302\363", 1683, 11},  // 丹麦
+  {2, "\260\256\266\373\300\274", 1694, 10},  // 爱尔兰
+  {2, "\261\371\265\272", 1704, 9},  // 冰岛
+  {2, "\277\313\302\336\265\330\321\307", 1713, 8},  // 克罗地亚
+  {2, "\260\302\265\330\300\373", 1721, 6},  // 奥地利
+  {2, "\275\335\277\313", 1727, 6},  // 捷克
+  {2, "\260\256\311\263\304\341\321\307", 1733, 5},  // 爱沙尼亚
+  {2, "\261\310\300\373\312\261", 1738, 5},  // 比利时
+  {2, "\272\311\300\274", 1743, 5},  // 荷兰
+  {2, "\310\360\312\277", 1748, 5},  // 瑞士
+  {2, "\260\327\266\355\302\336\313\271", 1753, 4},  // 白俄罗斯
+  {2, "\261\243\274\323\300\373\321\307", 1757, 4},  // 保加利亚
+  {2, "\262\250\272\332", 1761, 4},  // 波黑
+  {2, "\313\271\302\345\267\245\277\313", 1765, 4},  // 斯洛伐克
+  {2, "\320\331\321\300\300\373", 1769, 4},  // 匈牙利
+  {2, "\301\242\314\325\315\360", 1773, 3},  // 立陶宛
+  {2, "\310\373\266\373\316\254\321\307", 1776, 3},  // 塞尔维亚
+  {2, "\261\261\302\355\306\344\266\331", 1779, 2},  // 北马其顿
+  {2, "\270\371\316\367\265\272", 1781, 2},  // 根西岛
+  {2, "\272\332\311\275", 1783, 2},  // 黑山
+  {2, "\313\271\302\345\316\304\304\341\321\307", 1785, 2},  // 斯洛文尼亚
+  {2, "\260\242\266\373\260\315\304\341\321\307", 1787, 1},  // 阿尔巴尼亚
+  {2, "\267\250\302\336\310\272\265\272", 1788, 1},  // 法罗群岛
+  {2, "\277\306\313\367\316\326", 1789, 1},  // 科索沃
+  {2, "\300\255\315\321\316\254\321\307", 1790, 1},  // 拉脱维亚
+  {2, "\302\254\311\255\261\244", 1791, 1},  // 卢森堡
+  {2, "\302\355\266\367\265\272", 1792, 1},  // 马恩岛
+  {2, "\302\355\266\372\313\373", 1793, 1},  // 马耳他
+  {2, "\304\246\266\373\266\340\315\337", 1794, 1},  // 摩尔多瓦
+  {2, "\324\363\316\367\265\272", 1795, 1},  // 泽西岛
+  {2, "\326\261\262\274\302\336\315\323", 1796, 1},  // 直布罗陀
+  {3, "\303\300\271\372", 1797, 634},  // 美国
+  {3, "\274\323\304\303\264\363", 2431, 252},  // 加拿大
+  {3, "\304\253\316\367\270\347", 2683, 63},  // 墨西哥
+  {3, "\260\315\271\376\302\355", 2746, 22},  // 巴哈马
+  {3, "\271\305\260\315", 2768, 15},  // 古巴
+  {3, "\270\361\301\352\300\274", 2783, 13},  // 格陵兰
+  {3, "\260\315\304\303\302\355", 2796, 12},  // 巴拿马
+  {3, "\262\256\300\373\327\310", 2808, 12},  // 伯利兹
+  {3, "\270\347\313\271\264\357\300\350\274\323", 2820, 9},  // 哥斯达黎加
+  {3, "\262\250\266\340\300\350\270\367", 2829, 8},  // 波多黎各
+  {3, "\266\340\303\327\304\341\274\323", 2837, 8},  // 多米尼加
+  {3, "\272\351\266\274\300\255\313\271", 2845, 8},  // 洪都拉斯
+  {3, "\316\243\265\330\302\355\300\255", 2853, 6},  // 危地马拉
+  {3, "\271\317\265\302\302\336\306\325", 2859, 5},  // 瓜德罗普
+  {3, "\312\245\316\304\311\255\314\330", 2864, 5},  // 圣文森特
+  {3, "\314\330\277\313\313\271\272\315\277\255\277\306\313\271", 2869, 5},  // 特克斯和凯科斯
+  {3, "\272\243\265\330", 2874, 4},  // 海地
+  {3, "\304\341\274\323\300\255\271\317", 2878, 4},  // 尼加拉瓜
+  {3, "\321\300\302\362\274\323", 2882, 4},  // 牙买加
+  {3, "\272\311\312\364\274\323\300\325\261\310\307\370", 2886, 3},  // 荷属加勒比区
+  {3, "\260\262\314\341\271\317\272\315\260\315\262\274\264\357", 2889, 2},  // 安提瓜和巴布达
+  {3, "\266\340\303\327\304\341\277\313", 2891, 2},  // 多米尼克
+  {3, "\270\361\301\326\304\311\264\357", 2893, 2},  // 格林纳达
+  {3, "\277\252\302\374\310\272\265\272", 2895, 2},  // 开曼群岛
+  {3, "\303\300\312\364\316\254\266\373\276\251\310\272\265\272", 2897, 2},  // 美属维尔京群岛
+  {3, "\310\370\266\373\315\337\266\340", 2899, 2},  // 萨尔瓦多
+  {3, "\312\245\273\371\264\304\272\315\304\341\316\254\313\271", 2901, 2},  // 圣基茨和尼维斯
+  {3, "\312\245\302\254\316\367\321\307", 2903, 2},  // 圣卢西亚
+  {3, "\312\245\306\244\260\243\266\373\272\315\303\334\277\313\302\241\310\272\265\272", 2905, 2},  // 圣皮埃尔和密克隆群岛
+  {3, "\314\330\301\242\304\341\264\357\272\315\266\340\260\315\270\347", 2907, 2},  // 特立尼达和多巴哥
+  {3, "\323\242\312\364\316\254\266\373\276\251\310\272\265\272", 2909, 2},  // 英属维尔京群岛
+  {3, "\260\242\302\263\260\315", 2911, 1},  // 阿鲁巴
+  {3, "\260\262\271\347\300\255", 2912, 1},  // 安圭拉
+  {3, "\260\315\260\315\266\340\313\271", 2913, 1},  // 巴巴多斯
+  {3, "\260\331\304\275\264\363", 2914, 1},  // 百慕大
+  {3, "\267\250\312\364\312\245\302\355\266\241", 2915, 1},  // 法属圣马丁
+  {3, "\272\311\312\364\312\245\302\355\266\241", 2916, 1},  // 荷属圣马丁
+  {3, "\277\342\300\255\313\367", 2917, 1},  // 库拉索
+  {3, "\302\355\314\341\304\341\277\313", 2918, 1},  // 马提尼克
+  {3, "\303\311\314\330\310\373\300\255\314\330", 2919, 1},  // 蒙特塞拉特
+  {3, "\312\245\260\315\314\251\300\325\303\327", 2920, 1},  // 圣巴泰勒米
+  {4, "\260\315\316\367", 2921, 129},  // 巴西
+  {4, "\270\347\302\327\261\310\321\307", 3050, 50},  // 哥伦比亚
+  {4, "\260\242\270\371\315\242", 3100, 45},  // 阿根廷
+  {4, "\303\330\302\263", 3145, 25},  // 秘鲁
+  {4, "\316\257\304\332\310\360\300\255", 3170, 22},  // 委内瑞拉
+  {4, "\326\307\300\373", 3192, 19},  // 智利
+  {4, "\262\243\300\373\316\254\321\307", 3211, 15},  // 玻利维亚
+  {4, "\266\362\271\317\266\340\266\373", 3226, 15},  // 厄瓜多尔
+  {4, "\313\325\300\357\304\317", 3241, 6},  // 苏里南
+  {4, "\271\347\321\307\304\307", 3247, 4},  // 圭亚那
+  {4, "\260\315\300\255\271\347", 3251, 3},  // 巴拉圭
+  {4, "\267\250\312\364\271\347\321\307\304\307", 3254, 3},  // 法属圭亚那
+  {4, "\316\332\300\255\271\347", 3257, 3},  // 乌拉圭
+  {4, "\270\243\277\313\300\274\310\272\265\272", 3260, 2},  // 福克兰群岛
+  {5, "\260\304\264\363\300\373\321\307", 3262, 156},  // 澳大利亚
+  {5, "\267\250\312\364\262\250\300\373\304\341\316\367\321\307", 3418, 38},  // 法属波利尼西亚
+  {5, "\260\315\320\302", 3456, 37},  // 巴新
+  {5, "\320\302\316\367\300\274", 3493, 28},  // 新西兰
+  {5, "\313\371\302\336\303\305\310\272\265\272", 3521, 20},  // 所罗门群岛
+  {5, "\354\263\274\303", 3541, 17},  // 斐济
+  {5, "\315\337\305\254\260\242\315\274", 3558, 17},  // 瓦努阿图
+  {5, "\302\355\311\334\266\373\310\272\265\272", 3575, 16},  // 马绍尔群岛
+  {5, "\320\302\277\246\300\357\266\340\304\341\321\307", 3591, 11},  // 新喀里多尼亚
+  {5, "\277\342\277\313\310\272\265\272", 3602, 6},  // 库克群岛
+  {5, "\314\300\274\323", 3608, 5},  // 汤加
+  {5, "\273\371\300\357\260\315\313\271", 3613, 4},  // 基里巴斯
+  {5, "\303\334\277\313\302\336\304\341\316\367\321\307", 3617, 4},  // 密克罗尼西亚
+  {5, "\261\261\302\355\300\357\321\307\304\311\310\272\265\272", 3621, 3},  // 北马里亚纳群岛
+  {5, "\303\300\312\364\310\370\304\246\321\307", 3624, 3},  // 美属萨摩亚
+  {5, "\315\337\300\373\313\271\272\315\270\273\315\274\304\311", 3627, 2},  // 瓦利斯和富图纳
+  {5, "\271\330\265\272", 3629, 1},  // 关岛
+  {5, "\303\300\271\372\261\276\315\301\315\342\320\241\265\272\323\354", 3630, 1},  // 美国本土外小岛屿
+  {5, "\350\247\302\263", 3631, 1},  // 瑙鲁
+  {5, "\305\246\260\243", 3632, 1},  // 纽埃
+  {5, "\305\265\270\243\277\313\265\272", 3633, 1},  // 诺福克岛
+  {5, "\305\301\300\315", 3634, 1},  // 帕劳
+  {5, "\310\370\304\246\321\307", 3635, 1},  // 萨摩亚
+  {5, "\315\274\315\337\302\254", 3636, 1},  // 图瓦卢
+  {6, "\260\242\266\373\274\260\300\373\321\307", 3637, 31},  // 阿尔及利亚
+  {6, "\260\243\310\373\266\355\261\310\321\307", 3668, 24},  // 埃塞俄比亚
+  {6, "\304\341\310\325\300\373\321\307", 3692, 24},  // 尼日利亚
+  {6, "\304\317\267\307", 3716, 22},  // 南非
+  {6, "\270\325\271\373\243\250\275\360\243\251", 3738, 20},  // 刚果（金）
+  {6, "\260\243\274\260", 3758, 17},  // 埃及
+  {6, "\304\246\302\345\270\347", 3775, 17},  // 摩洛哥
+  {6, "\302\355\264\357\274\323\313\271\274\323", 3792, 16},  // 马达加斯加
+  {6, "\314\271\311\243\304\341\321\307", 3808, 16},  // 坦桑尼亚
+  {6, "\260\262\270\347\300\255", 3824, 13},  // 安哥拉
+  {6, "\277\317\304\341\321\307", 3837, 12},  // 肯尼亚
+  {6, "\304\252\311\243\261\310\277\313", 3849, 12},  // 莫桑比克
+  {6, "\304\311\303\327\261\310\321\307", 3861, 9},  // 纳米比亚
+  {6, "\267\360\265\303\275\307", 3870, 7},  // 佛得角
+  {6, "\300\373\261\310\321\307", 3877, 7},  // 利比亚
+  {6, "\313\325\265\244", 3884, 7},  // 苏丹
+  {6, "\313\367\302\355\300\357", 3891, 7},  // 索马里
+  {6, "\315\273\304\341\313\271", 3898, 7},  // 突尼斯
+  {6, "\274\323\305\356", 3905, 6},  // 加蓬
+  {6, "\316\332\270\311\264\357", 3911, 6},  // 乌干达
+  {6, "\324\336\261\310\321\307", 3917, 6},  // 赞比亚
+  {6, "\262\251\264\304\315\337\304\311", 3923, 5},  // 博茨瓦纳
+  {6, "\263\340\265\300\274\270\304\332\321\307", 3928, 5},  // 赤道几内亚
+  {6, "\274\323\304\311", 3933, 5},  // 加纳
+  {6, "\277\246\302\363\302\241", 3938, 5},  // 喀麦隆
+  {6, "\302\355\300\357", 3943, 5},  // 马里
+  {6, "\275\362\260\315\262\274\316\244", 3948, 4},  // 津巴布韦
+  {6, "\277\306\314\330\265\317\315\337", 3952, 4},  // 科特迪瓦
+  {6, "\262\274\302\241\265\317", 3956, 3},  // 布隆迪
+  {6, "\303\253\300\357\313\376\304\341\321\307", 3959, 3},  // 毛里塔尼亚
+  {6, "\304\317\313\325\265\244", 3962, 3},  // 南苏丹
+  {6, "\310\373\304\332\274\323\266\373", 3965, 3},  // 塞内加尔
+  {6, "\316\367\310\366\271\376\300\255", 3968, 3},  // 西撒哈拉
+  {6, "\262\274\273\371\304\311\267\250\313\367", 3971, 2},  // 布基纳法索
+  {6, "\270\325\271\373\243\250\262\274\243\251", 3973, 2},  // 刚果（布）
+  {6, "\277\306\304\246\302\336", 3975, 2},  // 科摩罗
+  {6, "\300\373\261\310\300\357\321\307", 3977, 2},  // 利比里亚
+  {6, "\301\364\304\341\315\364", 3979, 2},  // 留尼汪
+  {6, "\302\254\315\372\264\357", 3981, 2},  // 卢旺达
+  {6, "\302\355\300\255\316\254", 3983, 2},  // 马拉维
+  {6, "\303\253\300\357\307\363\313\271", 3985, 2},  // 毛里求斯
+  {6, "\304\341\310\325\266\373", 3987, 2},  // 尼日尔
+  {6, "\310\373\311\340\266\373", 3989, 2},  // 塞舌尔
+  {6, "\312\245\266\340\303\300\272\315\306\325\301\326\316\367\261\310", 3991, 2},  // 圣多美和普林西比
+  {6, "\312\245\272\325\300\325\304\303", 3993, 2},  // 圣赫勒拿
+  {6, "\261\264\304\376", 3995, 1},  // 贝宁
+  {6, "\266\340\270\347", 3996, 1},  // 多哥
+  {6, "\266\362\301\242\314\330\300\357\321\307", 3997, 1},  // 厄立特里亚
+  {6, "\270\324\261\310\321\307", 3998, 1},  // 冈比亚
+  {6, "\274\252\262\274\314\341", 3999, 1},  // 吉布提
+  {6, "\274\270\304\332\321\307", 4000, 1},  // 几内亚
+  {6, "\274\270\304\332\321\307\261\310\311\334", 4001, 1},  // 几内亚比绍
+  {6, "\300\263\313\367\315\320", 4002, 1},  // 莱索托
+  {6, "\302\355\324\274\314\330", 4003, 1},  // 马约特
+  {6, "\310\373\300\255\300\373\260\272", 4004, 1},  // 塞拉利昂
+  {6, "\313\271\315\376\312\277\300\274", 4005, 1},  // 斯威士兰
+  {6, "\325\247\265\303", 4006, 1},  // 乍得
+  {6, "\326\320\267\307", 4007, 1},  // 中非
+};
+#define FB_COUNTRY_N 233
+static const char FB_APT_ORDER[][4] = {
+  "BAV", "PEK", "PKX", "CGQ", "CSX", "CTU", "TFU", "CKG", "DLC", "DAT", "DNH", "EHU", "FOC", "CAN", "KWL", "KWE",
+  "HAK", "HLD", "HGH", "HRB", "HFE", "HET", "HIA", "TXN", "JGN", "SWA", "TNA", "JHG", "KHG", "KMG", "LHW", "LXA",
+  "LYG", "LJG", "LYA", "KHN", "NKG", "NNG", "NGB", "DSN", "TAO", "NDG", "JJN", "SYX", "PVG", "SHA", "SHE", "SZX",
+  "RKZ", "SJW", "TYN", "TSN", "URC", "WNZ", "WUH", "WUX", "XIY", "XMN", "XNN", "YNZ", "YNT", "INC", "YIW", "YCU",
+  "DYG", "ZHA", "CGO", "HSN", "ZUH", "AKU", "AAT", "AXF", "AQG", "AOG", "AVA", "YIE", "DBC", "AEB", "NBS", "BPX",
+  "BSD", "TCZ", "RLK", "BZX", "BHY", "BFY", "BFJ", "BPL", "KJI", "CGD", "CZX", "CHG", "CDE", "HCZ", "CIF", "DLU",
+  "DDG", "DZH", "LUM", "HXD", "DIG", "DOY", "ENH", "ERL", "FUO", "FUG", "FYJ", "FYN", "DCY", "KGT", "GOQ", "GMQ",
+  "GYS", "GYU", "HMI", "HDG", "HZG", "HCJ", "HEK", "HNY", "HZA", "GXH", "HUO", "HTN", "HJJ", "HUZ", "JGS", "JGD",
+  "JMU", "JSJ", "JNH", "JIC", "JDZ", "SHS", "JNG", "JNZ", "JZH", "JXA", "KJH", "KRL", "LZG", "LSG", "LNJ", "CWJ",
+  "LFQ", "LYI", "HZH", "LPF", "LZH", "LNL", "LCX", "LLV", "LZO", "NZH", "HTT", "MIG", "OHE", "MDG", "NTG", "NLH",
+  "LZY", "PZI", "JMJ", "JIQ", "IQM", "IQN", "BPE", "BAR", "JUZ", "RIZ", "RQA", "SQJ", "QSZ", "SQD", "HSC", "WGN",
+  "HPG", "DDR", "NGQ", "WDS", "SZH", "YSQ", "HYN", "HQL", "THQ", "TNH", "TGO", "TEN", "TLQ", "UCB", "WEF", "WEH",
+  "DTU", "WUA", "WHA", "CQW", "WUS", "WUZ", "XFN", "XIC", "XIL", "ACX", "XAI", "NLT", "XUZ", "ENY", "YTY", "YNJ",
+  "YBP", "YIH", "YIC", "LDS", "YKH", "YIN", "LLF", "YYA", "UYN", "YLX", "YUS", "NZL", "ZQZ", "YZY", "ZAT", "ZHY",
+  "ZYI", "WMT", "AKA", "HQQ", "ACF", "RHT", "CIH", "JUH", "CNI", "DQA", "DAX", "KOW", "GZG", "HBQ", "HJB", "YTW",
+  "JIU", "KRY", "KCA", "MXZ", "NAO", "NNY", "SYM", "LLB", "JBK", "LGZ", "SHF", "TCG", "TVS", "TWC", "HLH", "WXN",
+  "WNH", "WSK", "DXJ", "WUT", "ZFL", "HUN", "MZG", "KHH", "RMQ", "TNN", "TPE", "TSA", "MFK", "LZN", "KYD", "KNH",
+  "CYI", "TTT", "HKG", "MFM", "AMQ", "BPN", "BTJ", "BDJ", "BTH", "DPS", "CGK", "HLP", "DJJ", "UPG", "MDC", "LOP",
+  "KNO", "PDG", "PNK", "SRG", "SUB", "SOC", "YIA", "BDO", "BKS", "BIK", "UGU", "BMU", "CXP", "DUM", "FKQ", "GNS",
+  "KNG", "DHX", "KJT", "KTG", "KXB", "MEQ", "KOE", "LSR", "TKG", "LUV", "MLG", "MKW", "MKQ", "NAM", "NPO", "OKL",
+  "PSU", "PKY", "PLM", "PLW", "PGK", "PKU", "NTX", "AAP", "FLZ", "SQG", "SOQ", "NAH", "TXE", "PDO", "TMH", "TNJ",
+  "BEJ", "TJG", "TRK", "TTE", "TIM", "TRT", "WMX", "WNI", "JOG", "OJU", "ABU", "RTI", "BWX", "BTW", "KSR", "BUI",
+  "BXT", "UOL", "CJN", "DTB", "DTD", "DEX", "ENE", "GTO", "DJB", "JBB", "ARD", "KWB", "KDI", "LBJ", "LSW", "LKM",
+  "LPU", "LBW", "LKI", "LNU", "MOF", "MOH", "BUU", "HMS", "MPC", "LLO", "PKN", "TMC", "RTG", "SMQ", "SXK", "KLP",
+  "FSH", "RKI", "KBU", "SWQ", "KRC", "TJS", "TJQ", "JIO", "LKA", "TLI", "TBM", "WGP", "RJM", "AMD", "ATQ", "BLR",
+  "BHO", "BBI", "CCJ", "IXC", "MAA", "CJB", "DXN", "GOI", "GAU", "HWR", "HSS", "HYD", "IMF", "IDR", "JAI", "CNN",
+  "COK", "CCU", "LKO", "IXE", "GOX", "BOM", "NAG", "ISK", "NMI", "DEL", "IXZ", "PNQ", "HSR", "SAG", "IXB", "SXR",
+  "STV", "TRV", "TRZ", "TIR", "BDQ", "VNS", "VGA", "VTZ", "IXA", "AGX", "AGR", "AJL", "KQH", "IXD", "AHA", "AVR",
+  "IXU", "BEK", "IXG", "BHU", "UKE", "BHJ", "PAB", "SDW", "DBR", "DED", "DIB", "DMU", "RDP", "AYJ", "GAY", "GDB",
+  "GOP", "GWL", "HBX", "HGI", "JLR", "JSA", "IXJ", "JGA", "JDH", "JRH", "CDP", "IXY", "DHM", "KNU", "IXK", "HJR",
+  "KLH", "KUU", "KJB", "LTU", "IXL", "IXM", "MZS", "MYQ", "NDC", "IXI", "PGH", "IXP", "PAT", "PNY", "PBD", "RPR",
+  "RJA", "IXR", "REW", "SHL", "IXS", "TEZ", "UDR", "AIP", "DGH", "DIU", "HDO", "JGB", "JLG", "JRG", "GBI", "VSV",
+  "TCR", "AOJ", "FUK", "HKD", "HIJ", "IBR", "KOJ", "KKJ", "UKB", "KMQ", "KMJ", "FSZ", "MYJ", "KMI", "NGS", "NGO",
+  "OKA", "KCZ", "KIJ", "OKJ", "KIX", "ITM", "HSG", "CTS", "SDJ", "TAK", "TKS", "HND", "NRT", "AXT", "AXJ", "ASJ",
+  "AKJ", "FUJ", "HAC", "HNA", "IKI", "ISG", "IWK", "OIM", "IZO", "KKX", "ONJ", "KTD", "UEO", "KUH", "IWJ", "MMJ",
+  "MMD", "MSJ", "MYE", "MMY", "SHI", "MBE", "NKM", "SHB", "SHM", "OBO", "OIT", "OKI", "OIR", "MMB", "RIS", "SDS",
+  "OKD", "SYO", "FKS", "TNE", "TRA", "TKN", "TTJ", "TOY", "TJH", "TSJ", "UBJ", "OKE", "NTQ", "WKJ", "KUM", "GAJ",
+  "YGJ", "OGN", "RNJ", "AGJ", "ESB", "AYT", "BJV", "DLM", "EDO", "AOE", "GZT", "IST", "SAW", "ADB", "ASR", "KYA",
+  "NAV", "GNY", "COV", "ADF", "AJI", "KZR", "MZH", "HTY", "BZI", "BAL", "BGG", "CKZ", "TEQ", "DNZ", "DIY", "EZS",
+  "ERC", "ERZ", "GZP", "YKO", "IGD", "ISE", "KCM", "KSY", "KFS", "MLX", "MQM", "MSR", "OGU", "RZV", "SZF", "NOP",
+  "NKT", "VAS", "TJK", "TZX", "VAN", "YEI", "ONQ", "ABD", "AWZ", "BND", "XBJ", "IFN", "PYK", "KER", "KIH", "MHD",
+  "GSM", "SYZ", "TBZ", "IKA", "THR", "ZAH", "AEU", "ADU", "BXR", "BDH", "BJB", "BUZ", "ZBR", "DEF", "GCH", "HDM",
+  "KKS", "KSH", "KHK", "PGU", "KHD", "LFM", "LRR", "MRX", "NSH", "RJN", "RZR", "RAS", "AFZ", "SDG", "SRY", "OMH",
+  "AZD", "JSK", "PFQ", "SNX", "BCD", "CGY", "DVO", "GES", "ILO", "KLO", "LAO", "CEB", "DRP", "CRK", "MNL", "SFS",
+  "TAG", "PPS", "ZAM", "BSO", "TWT", "BXU", "CYP", "CRM", "MPH", "CYZ", "USU", "CBO", "DPL", "DGT", "JOL", "CGM",
+  "MBT", "WNP", "OZC", "PAG", "RXS", "SJI", "SUG", "TBH", "TAC", "TUG", "VRC", "BSI", "CYU", "ENI", "SWL", "IAO",
+  "IPH", "JHB", "BKI", "KUL", "KCH", "LGK", "PEN", "SZB", "AOR", "BBN", "BTU", "KBR", "TGG", "KUA", "LBU", "LDU",
+  "LMN", "MKZ", "MUR", "MYY", "MKM", "MZV", "SDK", "SBW", "TWU", "TOD", "BKM", "KUD", "LWY", "LBP", "LGL", "ODN",
+  "PKG", "TMG", "BKK", "DMK", "CNX", "CEI", "HDY", "USM", "KBV", "HKT", "UTP", "UTH", "BFV", "CJM", "HHQ", "KKC",
+  "LPT", "LOE", "HGN", "MAQ", "KOP", "NST", "NNT", "NAW", "PHY", "PHS", "UNN", "ROI", "SNO", "THS", "URT", "PXR",
+  "TST", "TDX", "UBP", "AHB", "AJF", "ULH", "DMM", "HAS", "RSI", "HOF", "JED", "MED", "AQI", "ELQ", "RUH", "NUM",
+  "TIF", "TUU", "YNB", "EJH", "ABT", "RAE", "BHH", "DWD", "URY", "GIZ", "KMC", "EAM", "RAH", "SHW", "TUI", "WAE",
+  "SCO", "AKX", "ALA", "NQZ", "GUW", "BXY", "KGF", "KOV", "KSN", "KZO", "URA", "UKK", "PWQ", "PPK", "PLX", "CIT",
+  "DMB", "HSA", "DZN", "BXH", "TDK", "UZR", "USJ", "SZI", "LYP", "GWD", "ISB", "KHI", "LHE", "MUX", "PEW", "UET",
+  "SKT", "KDU", "TUK", "BHV", "CJL", "DEA", "PZH", "GIL", "WNS", "RYK", "SKZ", "DBA", "HDD", "KDD", "MFG", "MDL",
+  "NYT", "RGN", "TVY", "HEH", "KAW", "KET", "KYP", "LSH", "LIW", "MOG", "MGZ", "MYT", "PBU", "AKY", "THL", "SNW",
+  "NYU", "BMO", "KHM", "MWQ", "MNU", "BSX", "VCA", "DAD", "HPH", "HAN", "SGN", "HUI", "CXR", "PQC", "BMV", "CAH",
+  "VCS", "DLI", "DIN", "VDH", "PXU", "UIH", "VKG", "TBB", "VDO", "VII", "VCL", "THD", "BWA", "KTM", "PHH", "BIR",
+  "JKR", "LUA", "KEP", "PKR", "TPJ", "BDP", "BHR", "DOP", "JMO", "JUM", "SIH", "SIF", "IMK", "SKH", "TMI", "PUS",
+  "CJJ", "TAE", "MWX", "CJU", "GMP", "ICN", "YNY", "KUV", "KWJ", "KPO", "HIN", "USN", "WJU", "RSU", "GAN", "HAQ",
+  "MLE", "KDM", "KDO", "NMF", "VAM", "DRV", "FMT", "FND", "HRF", "GKK", "HDK", "RUL", "TMF", "UBN", "LTI", "AVK",
+  "BYN", "UGA", "COQ", "DLZ", "HVD", "MXV", "ULG", "ULO", "MXW", "ULZ", "BHK", "NMA", "NCU", "SKD", "TAS", "UGC",
+  "AZN", "FEG", "NVI", "TVT", "TMJ", "OMN", "KSQ", "AUH", "AAN", "DXB", "DWC", "FJR", "RKT", "SHJ", "ZDY", "CGP",
+  "DAC", "ZYL", "BZL", "CXB", "JSR", "RJH", "SPD", "LPQ", "PKZ", "VTE", "BOR", "LXG", "ODY", "XKH", "CMB", "RML",
+  "JAF", "BTC", "HRI", "KCT", "TRR", "ADE", "RIY", "SAH", "GXF", "AAY", "SCT", "TAI", "HEA", "KBL", "KDH", "MZR",
+  "KHT", "FBD", "GYD", "GNJ", "NAJ", "GBB", "LHL", "LLK", "KTI", "PNH", "SAI", "KOS", "DSY", "BBM", "ASB", "TAZ",
+  "CRZ", "BKN", "MYP", "KRW", "BGW", "BSR", "EBL", "KIK", "NJF", "ISU", "DQM", "MCT", "SLL", "OHS", "KHS", "FNJ",
+  "RGO", "DSO", "WOS", "DIL", "OEC", "BCH", "UAI", "BUS", "KUT", "SUI", "TBS", "BSZ", "OSS", "IKU", "IKG", "KQT",
+  "DYU", "LBD", "TJU", "ALP", "DAM", "LTK", "KAC", "PBH", "BUT", "YON", "LCA", "PFO", "ECN", "ETM", "TLV", "HFA",
+  "ADJ", "AMM", "AQJ", "SIN", "XSP", "LWN", "EVN", "BAH", "DOH", "CCK", "KWI", "BEY", "XCH", "BWN", "ABA", "ASF",
+  "BAX", "CEK", "HTA", "GRV", "IKT", "KGD", "KZN", "KEJ", "KRR", "KJA", "MQF", "MCX", "MRV", "SVO", "DME", "VKO",
+  "ZIA", "MMK", "NJC", "GOJ", "NSK", "OVB", "OMS", "PKC", "PEE", "KUF", "SKX", "GSV", "AER", "LED", "SGC", "TOF",
+  "TJM", "UUS", "UFA", "UUD", "VVO", "VOG", "YKS", "IAR", "SVX", "AMV", "DYR", "ARH", "BWO", "EYK", "BQS", "BVJ",
+  "BTK", "UUA", "CSY", "KCY", "CEE", "CYX", "CKH", "NER", "ESL", "GDZ", "HMA", "IAA", "IWA", "IJK", "KXK", "KPW",
+  "KHV", "HTG", "MQJ", "KVX", "KGP", "KMW", "KSZ", "KRO", "KYZ", "ULK", "GDX", "IGT", "MJZ", "NLI", "NYM", "NAL",
+  "NNM", "NBC", "NOZ", "NUX", "NOJ", "NYA", "OHO", "OLZ", "REN", "OSW", "PEX", "PEZ", "PES", "PWE", "PKV", "SBT",
+  "SLY", "SYS", "OVS", "SEK", "STW", "SCW", "IKS", "RMZ", "UCT", "ULV", "ULY", "URJ", "USK", "UKX", "USR", "VEO",
+  "VAQ", "VUS", "VYI", "OGZ", "VKT", "VOZ", "PYJ", "EIE", "ZIX", "ZKP", "KVK", "BQJ", "SUK", "ODO", "BQG", "DLR",
+  "DPT", "ITU", "LDG", "KVM", "MJY", "NZG", "NGK", "TLY", "EKS", "CSH", "SUY", "TKM", "GOY", "THX", "UKG", "UMS",
+  "VHV", "DEE", "ABZ", "BFS", "BHX", "BRS", "CWL", "EDI", "GLA", "PIK", "LBA", "LPL", "LHR", "LGW", "LTN", "STN",
+  "MAN", "NCL", "EMA", "BRR", "BHD", "BEB", "BOH", "CAL", "MME", "LDY", "DND", "EOI", "EXT", "HUY", "INV", "ILY",
+  "KOI", "LSI", "LCY", "NQY", "NWI", "SEN", "SOU", "SYY", "TRE", "WIC", "COL", "CSA", "FIE", "FOA", "LEQ", "LWK",
+  "NRL", "OBN", "PPW", "NDY", "ISC", "SOY", "WRY", "BIA", "BVA", "BOD", "BES", "CFE", "FSC", "LIL", "LYS", "MRS",
+  "MPL", "BSL", "NTE", "NCE", "CDG", "ORY", "SXB", "TLS", "AJA", "NCY", "AUR", "AVN", "EGC", "BZR", "BIQ", "BVE",
+  "CFR", "CLY", "CCF", "DCM", "CMF", "DOL", "DLE", "GNB", "LRH", "LIG", "ETZ", "FNI", "XCR", "PUF", "PGF", "PIS",
+  "RNS", "RDZ", "LDE", "TLN", "TUF", "LPY", "OUI", "LTT", "AES", "BGO", "BOO", "EVE", "KRS", "OSL", "TRF", "SVG",
+  "TOS", "TRD", "ALF", "ANX", "MOL", "BJF", "BVG", "BNN", "FRO", "HFT", "HAU", "HVG", "KKN", "KSU", "LKL", "SRP",
+  "LKN", "LYR", "BDU", "MEH", "MQN", "MJF", "OLA", "HOV", "RRS", "RVK", "SSJ", "SOJ", "SKN", "SVJ", "VDS", "VAW",
+  "FDE", "HAA", "OSY", "RET", "SDN", "SOG", "ALC", "BCN", "BIO", "FUE", "GRO", "LPA", "IBZ", "MAD", "AGP", "MAH",
+  "PMI", "OVD", "RMU", "REU", "ACE", "SCQ", "SVQ", "TFN", "TFS", "VLC", "ZAZ", "LCG", "VIT", "LEI", "LEU", "BJZ",
+  "CDT", "ODB", "VDE", "GRX", "XRY", "LEN", "ILD", "RJL", "MLN", "PNA", "SLM", "EAS", "SDR", "SPC", "VLL", "VGO",
+  "GMZ", "BRI", "BGY", "BLQ", "BDS", "CAG", "CTA", "FLR", "GOA", "SUF", "MXP", "LIN", "NAP", "OLB", "PMO", "PEG",
+  "PSR", "PSA", "RMI", "FCO", "CIA", "TSF", "TRS", "TRN", "VCE", "VRN", "AHO", "AOI", "BZO", "VBS", "EBA", "CIY",
+  "CRV", "CUF", "FOG", "FRL", "LMP", "PNL", "PMF", "REG", "QSR", "TPS", "ATH", "CHQ", "CFU", "HER", "KVA", "EFL",
+  "KGS", "RHO", "JTR", "SKG", "ZTH", "AXD", "JKH", "IOA", "KLX", "AOK", "KZI", "JMK", "MJT", "GPA", "PVK", "SMI",
+  "JSH", "JSI", "VOL", "JTY", "JIK", "JKL", "KSJ", "KZS", "KSO", "KIT", "LRS", "LXS", "MLO", "JNX", "PAS", "SKU",
+  "JSY", "BER", "BRE", "CGN", "DTM", "DRS", "DUS", "ERF", "FDH", "FRA", "HHN", "HAM", "HAJ", "FKB", "KSF", "LEJ",
+  "FMM", "MUC", "FMO", "NUE", "PAD", "STR", "NRN", "FCN", "HDF", "LBC", "MHG", "RLG", "SCN", "GWT", "BMR", "BMK",
+  "EME", "HEI", "HGL", "JUI", "NOD", "NRD", "AGE", "GOT", "KRN", "LPI", "LLA", "MMX", "SCR", "ARN", "NYO", "VST",
+  "UME", "VBY", "AGH", "AJR", "BLE", "GEV", "HAD", "JKG", "KLR", "KSD", "KRF", "LYC", "MXX", "NRK", "ORB", "OER",
+  "OSD", "RNB", "SFT", "BMA", "SDL", "TYF", "THN", "VXO", "VHM", "HMV", "PJA", "HFS", "EVG", "HEL", "IVL", "KTT",
+  "KUO", "LPP", "OUL", "RVN", "TMP", "TKU", "VAA", "ENF", "JOE", "JYV", "KAJ", "KEM", "KOK", "KAO", "MHQ", "POR",
+  "SVL", "FAO", "FNC", "LIS", "PDL", "OPO", "BGC", "CAT", "HOR", "PIX", "PRM", "TER", "FLW", "GRW", "SJZ", "PXO",
+  "VRL", "SMA", "VSE", "CVU", "BCM", "GHV", "BBU", "OTP", "CLJ", "CND", "CRA", "IAS", "OMR", "SBZ", "SCV", "TSR",
+  "ARW", "BAY", "SUJ", "TGM", "GDN", "KTW", "KRK", "LCJ", "LUZ", "POZ", "RZE", "SZZ", "WAW", "WMI", "WRO", "BZG",
+  "RDO", "SZY", "IEG", "AAL", "AAR", "BLL", "CPH", "ODE", "RNN", "EBJ", "KRP", "RKE", "SGD", "BYR", "NOC", "ORK",
+  "DUB", "SNN", "CFN", "KIR", "NNR", "IIA", "IOR", "INQ", "AEY", "KEF", "EGS", "GRY", "HFN", "IFJ", "RKV", "VPN",
+  "THO", "DBV", "PUY", "RJK", "SPU", "ZAD", "ZAG", "BWK", "OSI", "GRZ", "INN", "KLU", "LNZ", "SZG", "VIE", "JCL",
+  "KLV", "OSR", "PED", "PRG", "BRQ", "TLL", "KDL", "URE", "EPU", "TAY", "BRU", "CRL", "OST", "ANR", "LGG", "AMS",
+  "EIN", "GRQ", "MST", "RTM", "GVA", "ZRH", "BRN", "LUG", "ACH", "BQT", "MSQ", "GME", "MVQ", "BOJ", "PDV", "SOF",
+  "VAR", "BNX", "OMO", "SJJ", "TZL", "BTS", "KSC", "TAT", "SLD", "BUD", "DEB", "PEV", "SOB", "KUN", "PLQ", "VNO",
+  "BEG", "INI", "KVO", "OHD", "SKP", "GCI", "ACI", "TGD", "TIV", "LJU", "MBX", "TIA", "FAE", "PRN", "RIX", "LUX",
+  "IOM", "MLA", "RMO", "JER", "GIB", "ALB", "ABQ", "ANC", "ATL", "AUS", "BWI", "BHM", "BOI", "BOS", "BUF", "BUR",
+  "CHS", "CLT", "ORD", "MDW", "CVG", "CLE", "COS", "CMH", "DAL", "DFW", "DEN", "DSM", "DTW", "ELP", "FLL", "RSW",
+  "FAT", "GRR", "GSO", "BDL", "HNL", "IAH", "HOU", "IND", "JAX", "OGG", "KOA", "MCI", "TYS", "LAS", "LIH", "LGB",
+  "LAX", "SDF", "MEM", "MIA", "MKE", "MSP", "MYR", "BNA", "MSY", "JFK", "EWR", "LGA", "ORF", "OAK", "OKC", "OMA",
+  "ONT", "MCO", "SFB", "PSP", "PNS", "PHL", "PHX", "PIT", "PDX", "PWM", "PVD", "RDU", "RNO", "RIC", "ROC", "SMF",
+  "SLC", "SAT", "SBD", "SAN", "SFO", "SJC", "SNA", "SRQ", "SAV", "SEA", "GEG", "STL", "PIE", "SYR", "TPA", "TUS",
+  "TUL", "IAD", "DCA", "DJT", "ABR", "ABI", "SPI", "ADK", "CAK", "ALS", "ABY", "WKK", "AEX", "ABE", "AIA", "APN",
+  "AOO", "AMA", "ABL", "AKP", "MRI", "ANI", "ANV", "ATW", "ARC", "AVL", "ASE", "PDK", "ACY", "ATK", "AGS", "AUG",
+  "BFL", "BGR", "BTI", "BTR", "BPT", "BKW", "BED", "BLV", "BLI", "BET", "BIL", "BGM", "BIH", "BIS", "BMI", "BLD",
+  "BZN", "BFD", "BRD", "BKG", "SGF", "CKB", "BRO", "BQK", "BRL", "BTV", "BTM", "CHO", "CGI", "LUR", "CLD", "CNM",
+  "CPR", "CDC", "CID", "CDR", "CRW", "CHA", "CYS", "LUK", "CVN", "COD", "CDB", "CLL", "CAE", "COU", "CSG", "GTR",
+  "LCK", "CCR", "USA", "CDV", "CRP", "CEZ", "CEC", "DAY", "DAB", "SCC", "DEC", "DRG", "BJC", "DSI", "DVL", "DIK",
+  "DLG", "DDC", "DHN", "DOV", "DUJ", "DBQ", "DLH", "DRO", "EGE", "ESD", "EAU", "EGX", "ELD", "EKO", "ELM", "EMK",
+  "ERI", "ESC", "EUG", "EVV", "PAE", "FAI", "FAR", "FLG", "FNT", "FLO", "GRK", "FOD", "FSM", "VPS", "FWA", "FTW",
+  "FYU", "FRD", "GNV", "GAL", "GUP", "GAM", "GCK", "GYY", "GCC", "GGW", "GDV", "GCN", "GFK", "GRI", "GJT", "FAY",
+  "GTF", "GRB", "GLH", "PGV", "GSP", "GPT", "GKN", "GUC", "GST", "HGR", "SUN", "HNS", "HNM", "CMX", "BHB", "HRL",
+  "MDT", "HRO", "PIB", "HVR", "HHR", "HDN", "HYS", "HLN", "HIB", "ITO", "HHH", "HOB", "HCR", "HOM", "HOT", "ACV",
+  "HTS", "HSV", "HSL", "HYA", "IDA", "ILI", "IPL", "INL", "IMT", "ITH", "JAC", "JAN", "MKL", "JMS", "JST", "JBR",
+  "JLN", "JNU", "AZO", "FCA", "MKK", "EAR", "ENA", "KTN", "EYW", "IAN", "CIU", "AKN", "IRK", "KLW", "ADQ", "OTZ",
+  "LSE", "LAF", "LFT", "JHM", "LCH", "HII", "LAL", "LNY", "LNS", "LAN", "LAR", "LRD", "LRU", "LBE", "LAW", "LEB",
+  "LWB", "LWS", "LEX", "LBL", "LNK", "LIT", "ISP", "GGG", "LBB", "LYH", "MCN", "MSN", "MMH", "MHT", "MHK", "MWA",
+  "MQT", "MCW", "MSS", "MFE", "MYL", "MCK", "MCG", "MFR", "MYU", "MLB", "MCE", "MEI", "AZA", "OPF", "MGC", "MAF",
+  "MBS", "MWL", "MOT", "MSO", "CNY", "MOB", "MLI", "MLU", "MRY", "MGM", "MTJ", "MGW", "CWA", "MSL", "MKG", "ACK",
+  "EWB", "EWN", "HVN", "SWF", "PHF", "NPT", "IAG", "OME", "OTH", "LBF", "ORT", "XNA", "NUI", "OCE", "OGD", "OGS",
+  "OLM", "OWB", "PAH", "PGA", "ECP", "PKB", "PSC", "PLN", "PDT", "PIA", "PSG", "PIR", "PTU", "PBG", "PIH", "PIZ",
+  "PTH", "PSM", "PRC", "PQI", "PVU", "PUB", "PUW", "PGD", "UIN", "RAP", "RDD", "RDM", "RHI", "OAJ", "RIW", "ROA",
+  "RST", "RKS", "RFD", "RKD", "ROW", "RBY", "RUT", "STC", "SLE", "SLN", "SBY", "SMN", "SJT", "SQL", "SBP", "SDP",
+  "SBA", "SAF", "SMX", "STS", "SLK", "SVA", "CMI", "BFF", "BFI", "SHR", "SOW", "SHV", "SDY", "SVC", "SUX", "FSD",
+  "SIT", "SBN", "UST", "SGU", "STG", "SNP", "SCE", "SHD", "SWO", "SCK", "TIW", "TLH", "TSM", "TEX", "TEB", "TXK",
+  "TVF", "TOL", "TVC", "TTN", "TRI", "TKF", "TUP", "TWF", "TYR", "UNK", "DUT", "UTO", "BRW", "VDZ", "VLD", "VEL",
+  "VRB", "VCT", "ACT", "MUE", "AIN", "ALW", "ALO", "ART", "ATY", "TBN", "EAT", "WYS", "WST", "HPN", "ICT", "SPS",
+  "AVP", "IPT", "XWA", "ILG", "ILM", "OLF", "ORH", "WRG", "YKM", "YAK", "YUM", "AKK", "KKI", "AKI", "KQA", "AUK",
+  "AET", "OTS", "AKB", "ATT", "WBQ", "BTT", "KBC", "BYW", "BID", "KTS", "BKC", "CYT", "CEM", "CWS", "CIK", "CYF",
+  "NCN", "VAK", "CKX", "KCG", "KCQ", "CHU", "IRC", "CLP", "CKD", "DTR", "EAA", "WDN", "EEK", "ELI", "KFP", "SSW",
+  "GLV", "GNU", "KGX", "HNH", "HPB", "HUS", "IGG", "IWD", "LUP", "KLG", "KAL", "KYK", "KUK", "KVC", "KPN", "KVL",
+  "OBU", "KNK", "KGK", "KKH", "KOT", "KKA", "KYU", "KWT", "KWK", "KLN", "LPS", "MBL", "MLY", "KMO", "MLL", "MVY",
+  "MYK", "LMA", "MNT", "MTP", "MOU", "KEB", "WNA", "PKA", "NLG", "KNW", "WWT", "NME", "NIB", "IKO", "WTK", "ORV",
+  "NUL", "SXP", "NUP", "OLH", "KOZ", "PDB", "KPV", "PIP", "PQS", "PHO", "PTA", "PGM", "ORI", "KWN", "RMP", "RDV",
+  "RCE", "RSH", "SCM", "WLK", "SOV", "SKK", "SHH", "SHG", "SGY", "SLQ", "WSN", "KSM", "SMK", "WBB", "SVS", "SRV",
+  "TCT", "TAL", "TEK", "TLA", "TNC", "TOG", "TKJ", "OOK", "TLT", "WTL", "TNK", "TWA", "VEE", "WAA", "WMO", "YYC",
+  "YEG", "YHZ", "YHM", "YLW", "YUL", "YOW", "YQB", "YXE", "YYT", "YYZ", "YVR", "YYJ", "YQG", "YWG", "YXX", "YAA",
+  "YBC", "YBK", "YLK", "ZBF", "ZEL", "QBC", "YBX", "YVB", "YBY", "YBR", "YKF", "YPZ", "YCB", "YBL", "YCG", "YYG",
+  "YMT", "YYQ", "YQQ", "YZS", "YXC", "YDN", "YDA", "YDF", "YPY", "YAG", "YMM", "YYE", "YFS", "YSM", "YFC", "YQX",
+  "YGP", "YND", "YYR", "YQU", "YQA", "YZP", "YHY", "YOJ", "YEV", "YFB", "YIV", "YKA", "XKS", "YQK", "YVP", "YGW",
+  "YGL", "YVC", "YGR", "YQL", "YLL", "YXU", "YYL", "ZMT", "YXH", "YQM", "YYY", "YHU", "YMX", "YMO", "YQN", "YCD",
+  "YNA", "YVQ", "YYB", "YRO", "YPE", "YYF", "YPQ", "YPL", "YNL", "YZT", "YPN", "YPW", "YPA", "YXS", "YPR", "YPX",
+  "XQU", "YQZ", "YRT", "YRL", "YQR", "YRB", "YRJ", "YUY", "YBG", "YSJ", "YXJ", "ZSJ", "YUX", "YAM", "YKL", "YZV",
+  "YXL", "YYD", "YIF", "YAY", "YSF", "YSB", "YQY", "YXT", "YQD", "YTH", "YQT", "YTS", "YAZ", "YTZ", "YVO", "YWK",
+  "YQH", "YZU", "YXY", "YVV", "YWL", "YCM", "YGV", "YZF", "LAK", "AKV", "YAL", "YAX", "YAB", "YEK", "YAT", "YPJ",
+  "XBE", "YBV", "YTL", "YBI", "YDV", "YBT", "YRF", "YAC", "YHG", "YCS", "YHR", "YKU", "ZUM", "YCY", "YCK", "YCR",
+  "YDL", "YVZ", "YWJ", "ZEM", "YFO", "ZFD", "YFA", "YGH", "YFH", "ZFM", "YER", "YRA", "YGX", "YHK", "YGO", "ZGI",
+  "YGZ", "YHO", "YGT", "ILF", "YPH", "YIK", "YWB", "YKG", "ZKE", "KEW", "YLC", "KIF", "YTE", "YBB", "YCO", "ZLT",
+  "XLB", "YLH", "YSG", "YMN", "YMH", "MSA", "YDP", "YNP", "YUT", "YNS", "YNO", "YNE", "YOG", "YOC", "YOH", "YXP",
+  "YPC", "YPO", "YPM", "YIO", "YHP", "YHA", "YMP", "YSO", "XPK", "YVM", "YQC", "YRS", "YRG", "ZRJ", "ZPB", "YSY",
+  "YZG", "YSK", "ZTM", "XSI", "YFX", "YST", "SUR", "XTL", "YYH", "YTQ", "YZZ", "ZFN", "YHI", "YUD", "YBE", "YKQ",
+  "YWP", "YFJ", "YNC", "YXN", "YLE", "YWM", "ZWL", "WNN", "XGR", "ZGS", "ZTB", "ACA", "AGU", "CUN", "CUU", "CJS",
+  "CZM", "CUL", "NLU", "GDL", "BJX", "HMO", "HUX", "ZIH", "LTO", "MZT", "MID", "MEX", "MTY", "MLM", "OAX", "PBC",
+  "PVR", "QRO", "SJD", "TIJ", "TLC", "TQO", "VER", "VSA", "CSW", "CPE", "CTM", "CME", "CVM", "CEN", "CLQ", "DGO",
+  "GYM", "IZT", "LAP", "LMM", "ZLO", "MAM", "MXL", "MTT", "NLD", "PDS", "PAZ", "PXM", "REX", "SLW", "SLP", "TAM",
+  "TAP", "TPQ", "TRC", "TGZ", "UPN", "ZCL", "CUA", "GUB", "SRL", "PPE", "FPO", "NAS", "ZSA", "MYG", "SAQ", "ASD",
+  "ATC", "BIM", "TBI", "CCZ", "CRI", "TZN", "LGI", "GGT", "GHB", "MHH", "IGA", "ELH", "RSD", "AXP", "SML", "TCB",
+  "CMW", "HAV", "HOG", "SNU", "SCU", "VRA", "BCA", "BYM", "CCC", "CYO", "CFG", "VTU", "MZO", "GER", "TND", "JAV",
+  "GOH", "JEG", "SFJ", "KUS", "CNP", "NAQ", "JJU", "JHS", "JSU", "JFR", "JQA", "JUV", "PTY", "PAC", "BOC", "CHX",
+  "CTD", "ONX", "DAV", "BLB", "OTD", "PDM", "BFQ", "RIH", "BZE", "CUK", "CYC", "CZH", "DGA", "PLJ", "SPR", "TZA",
+  "BGK", "INB", "ORZ", "PND", "LIR", "SJO", "GLF", "FON", "LIO", "NOB", "PJM", "XQP", "SYQ", "SJU", "BQN", "NRR",
+  "CPX", "MAZ", "PSE", "SIG", "VQS", "LRM", "PUJ", "STI", "SDQ", "BRX", "JBQ", "POP", "AZS", "XPL", "RTB", "SAP",
+  "GJA", "LCE", "TGU", "PEU", "UII", "GUA", "PBR", "RER", "FRS", "HUG", "AAZ", "PTP", "GBJ", "BBR", "DSD", "SFC",
+  "SVD", "BQU", "CIW", "MQS", "UNI", "PLS", "GDT", "NCA", "XSC", "SLX", "CAP", "PAP", "JEE", "CYA", "MGA", "BEF",
+  "PUZ", "RNI", "KIN", "MBJ", "OCJ", "KTP", "BON", "EUX", "SAB", "ANU", "BBQ", "DCF", "DOM", "GND", "CRU", "GCM",
+  "CYB", "STT", "STX", "SAL", "ILS", "SKB", "NEV", "UVF", "SLU", "FSP", "MQC", "POS", "TAB", "EIS", "VIJ", "AUA",
+  "AXA", "BGI", "BDA", "SFG", "SXM", "CUR", "FDF", "MNI", "SBH", "BEL", "CNF", "BVB", "BSB", "VCP", "CGB", "CWB",
+  "FLN", "FOR", "IGU", "GIG", "GYN", "JPA", "MCZ", "MAO", "NAT", "NVT", "POA", "BPS", "PVH", "REC", "RBR", "SSA",
+  "SDU", "SLZ", "GRU", "CGH", "VIX", "AFL", "ATM", "AJU", "ARU", "AUX", "AQA", "AAX", "JTC", "CPV", "CGR", "CAW",
+  "CAC", "CXJ", "XAP", "CMG", "JJD", "CZS", "FEN", "JDF", "GVR", "IOS", "IMP", "IPN", "ITB", "JOI", "LAJ", "LDB",
+  "MCP", "MNX", "MAB", "MII", "MGF", "MOC", "MVF", "TMT", "PMW", "CKS", "PHB", "PFB", "PAV", "PET", "PNZ", "PGZ",
+  "PMG", "IZA", "PPB", "RAO", "ROO", "RIA", "STM", "GEL", "SJL", "SJK", "SJP", "TBT", "TFF", "THE", "TUR", "UBA",
+  "UDI", "URG", "BVH", "VDC", "GGF", "BAZ", "BRA", "BYO", "RBB", "BVS", "CFB", "OAL", "CJZ", "CLV", "CEL", "CAF",
+  "CAU", "FBE", "GGJ", "GUZ", "JJG", "JPR", "JDO", "LBR", "LEC", "PYT", "JPE", "PTO", "OPP", "IRZ", "SRA", "SET",
+  "OPS", "SOD", "SMT", "TGQ", "TOW", "TJL", "UMU", "UNA", "UVI", "VAL", "BAQ", "BOG", "CLO", "CTG", "MDE", "ADZ",
+  "AUC", "AXM", "BSC", "BGA", "BUN", "APO", "CZU", "CUC", "EJA", "FLA", "GPI", "IBE", "PDA", "IPI", "LET", "MZL",
+  "EOH", "MVP", "MTR", "NVA", "PSO", "PEI", "PPN", "PVA", "PUU", "PCR", "UIB", "RCH", "SJE", "SVI", "SMR", "TME",
+  "TCO", "VUP", "VVC", "EYP", "LCR", "LMC", "LPD", "NQU", "LQM", "RVE", "TCD", "TLU", "AEP", "BRC", "CRD", "COR",
+  "EZE", "MDZ", "NQN", "RES", "RGL", "ROS", "SLA", "TUC", "JUJ", "BHI", "CTC", "CNQ", "FTE", "EQS", "FMA", "IRJ",
+  "LHS", "MDQ", "NEC", "PRA", "PMQ", "PSS", "PUD", "IGR", "PMY", "RGA", "UAQ", "LUQ", "CPC", "AFA", "SFN", "RSA",
+  "SST", "SDE", "RHD", "REL", "USH", "VDM", "GGS", "RYO", "OES", "AQP", "CIX", "CUZ", "IQT", "JUL", "LIM", "PCL",
+  "TRU", "AYP", "CJA", "CHH", "CHM", "HUU", "ILQ", "JAE", "JAU", "NZC", "PIU", "PEM", "TCQ", "TYL", "TPP", "TBP",
+  "YMS", "ANS", "BLA", "BRM", "CCS", "PZO", "PMV", "MAR", "VLN", "BNS", "CAJ", "CUP", "CZE", "CUM", "SOM", "VIG",
+  "MUN", "LSP", "SVZ", "SNV", "STD", "VLV", "LRV", "ICC", "ANF", "CCP", "IQQ", "IPC", "PMC", "PUQ", "SCL", "ZCO",
+  "ARI", "BBA", "CJC", "CPO", "ESR", "LSC", "ZOS", "PNT", "ZAL", "MHC", "ZPC", "CBB", "LPB", "ORU", "UYU", "VVI",
+  "SRE", "CIJ", "GYA", "PSZ", "RIB", "SRZ", "TJA", "TDD", "CCA", "RBQ", "GYE", "UIO", "SNC", "ESM", "OCC", "CUE",
+  "GPS", "LTX", "XMS", "ETR", "MEC", "TUA", "LOH", "IBB", "SCY", "PBM", "DRJ", "EAX", "MOJ", "ORG", "AGI", "GEO",
+  "KAI", "LTM", "OGL", "ASU", "AGT", "ENO", "CAY", "LDX", "MPY", "MVD", "PDP", "RVY", "MPN", "PSY", "ADL", "BNE",
+  "BME", "CNS", "DRW", "AVV", "OOL", "HBA", "MEL", "NTL", "PER", "PHE", "MCY", "SYD", "WTB", "WSI", "ALH", "ABX",
+  "ASP", "ARM", "BNK", "BCI", "BHS", "BEU", "THG", "BVI", "BKQ", "BQL", "BRK", "BHQ", "BDB", "BWT", "CBR", "CVQ",
+  "CED", "CTL", "CNJ", "CAZ", "CUQ", "CFS", "CPD", "CTN", "OOM", "CNB", "CMA", "MJK", "DPO", "DBO", "ELC", "EMD",
+  "EPR", "LEA", "FIZ", "GET", "GLT", "GFF", "GTE", "HTI", "HVB", "HID", "KGI", "KTA", "KNS", "KGC", "KWM", "KNX",
+  "LST", "LER", "LNO", "LHG", "LSY", "IRG", "LRE", "MKY", "MNG", "MKR", "MBW", "MEB", "SNB", "MIM", "MQL", "MOV",
+  "MRZ", "MYA", "MGB", "MHU", "ISA", "MMG", "NAA", "NRA", "ZNE", "GOV", "NTN", "OKY", "PBO", "PKE", "PUG", "PLO",
+  "PQQ", "PTJ", "PPP", "ULP", "ROK", "RMA", "TMW", "TCA", "XTG", "TSV", "WGA", "WGE", "WEI", "WYA", "WUN", "WNR",
+  "WIN", "AYQ", "AUU", "BDD", "ABM", "BXG", "GIC", "BUC", "BQB", "CKW", "CNC", "GYZ", "NLF", "DMD", "HGD", "JCK",
+  "KAX", "KFG", "KQR", "KRB", "KUG", "HOK", "LEL", "LVO", "LDH", "UBB", "MCV", "MGT", "ONG", "PXH", "MYI", "OLP",
+  "PMK", "EDR", "RAM", "RCM", "SBR", "SGO", "SYU", "FLS", "XMY", "OKR", "PPT", "AHE", "AAA", "AXR", "AUQ", "BOB",
+  "FAV", "FGU", "HOI", "HUH", "KKR", "MKP", "XMH", "MVT", "MAU", "MOZ", "NHV", "RFP", "RGI", "RUR", "TKP", "TKX",
+  "TIH", "GMR", "TUB", "APK", "FHZ", "HHZ", "KHZ", "NIU", "NAU", "PKP", "RVV", "RRR", "RMT", "TKV", "UAH", "UAP",
+  "LAE", "POM", "VMU", "OPU", "BUA", "DAU", "GKA", "GUR", "KVG", "KMA", "HKN", "RAB", "CMU", "MAG", "MAS", "MDU",
+  "HGU", "PNP", "VAI", "WBM", "WWK", "BOT", "GMI", "KIE", "KRI", "UNG", "LMY", "LNV", "LSA", "MIS", "MXH", "OBX",
+  "TDS", "TBG", "TPI", "TIZ", "TFI", "AKL", "CHC", "ZQN", "WLG", "KAT", "BHE", "DUD", "GIS", "HLZ", "HKK", "IVC",
+  "KKE", "NPE", "NSN", "NPL", "PMR", "ROT", "TUO", "TRG", "CHT", "TIU", "WKA", "WAG", "WSZ", "WHK", "WRE", "GBZ",
+  "PCN", "HIR", "MUA", "BNY", "AKS", "BAS", "CHY", "FRE", "GTA", "GZO", "KGE", "IRA", "MHM", "RUS", "RBV", "RNL",
+  "SCZ", "NNB", "MNY", "VAO", "XYA", "NAN", "SUV", "LBS", "ICI", "KXF", "LKB", "LEV", "PTF", "MNF", "TVU", "MFJ",
+  "NGI", "RTA", "SVU", "VBV", "KDV", "YAS", "VLI", "SON", "TAH", "CCV", "VLS", "FTA", "LPM", "LNB", "LOD", "LNE",
+  "NUS", "OLJ", "PBJ", "SSR", "TGH", "SLH", "WLH", "MAJ", "KWA", "JEJ", "AUL", "EJT", "ENT", "UIT", "KIO", "LIK",
+  "MJE", "MIJ", "RNP", "UJE", "UTK", "WTO", "WTE", "NOU", "ILP", "KNQ", "LIF", "MEE", "GEA", "UVE", "TGJ", "TOU",
+  "BMY", "KOC", "RAR", "AIT", "AIU", "MHX", "MUK", "MOI", "TBU", "VAV", "HPA", "EUA", "NTT", "CXI", "TRW", "AAK",
+  "BBG", "KSA", "TKK", "YAP", "PNI", "ROP", "SPN", "TIQ", "PPG", "FTI", "OFU", "WLS", "FUT", "GUM", "AWK", "INU",
+  "IUE", "NLK", "ROR", "APW", "FUN", "ALG", "AAE", "BLJ", "BJA", "BSK", "CFK", "CZL", "DJG", "GJL", "ORN", "TMR",
+  "TLM", "AZR", "CBH", "BMW", "ELG", "GHA", "ELU", "HME", "VVZ", "IAM", "INZ", "LOO", "MZW", "OGX", "QSF", "TEE",
+  "TMX", "TIN", "TGR", "EBH", "ADD", "DIR", "AWA", "JIJ", "AMH", "ASO", "AXU", "BJR", "GMB", "GDE", "GDQ", "JIM",
+  "BCO", "ABK", "MQX", "DBM", "DEM", "HUE", "DSE", "MTF", "SZE", "HIL", "SHC", "TIE", "ABV", "ABB", "BCU", "ENU",
+  "ILR", "KAD", "KAN", "LOS", "MIU", "PHC", "SKO", "AKR", "BNI", "CBQ", "PHG", "GMO", "IBA", "JOS", "DKA", "MDI",
+  "QOW", "QUO", "QRW", "YOL", "BFN", "CPT", "DUR", "ELS", "GRJ", "PLZ", "JNB", "KIM", "HLA", "MQP", "PTG", "HDS",
+  "MBD", "MGH", "MZQ", "UTT", "PZB", "PHW", "RCB", "SIS", "SZK", "UTN", "GOM", "FIH", "FKI", "FBM", "FDU", "BUX",
+  "BDT", "GMA", "IRP", "FMI", "KGA", "KKW", "KND", "KWZ", "MDK", "MJM", "BNB", "PFR", "INO", "KMN", "SPX", "HBE",
+  "AAC", "ASW", "ATZ", "CAI", "DBB", "HRG", "LXR", "RMF", "MUH", "PSD", "SSH", "HMB", "ABS", "CCE", "TCP", "AGA",
+  "BEM", "CMN", "RAK", "NDR", "OZZ", "OUD", "RBA", "FEZ", "TNG", "TTU", "OZG", "AHU", "UAR", "ERH", "ESU", "TTA",
+  "TNR", "MJN", "NOS", "TMM", "DIE", "BPY", "MNJ", "WMN", "MOQ", "SVB", "FTU", "TLE", "SMS", "DWB", "WTA", "TTS",
+  "JRO", "DAR", "MWZ", "ZNZ", "ARK", "DOD", "MBI", "MYW", "TGT", "BKZ", "TKQ", "MFA", "MUZ", "SEU", "SHY", "TBO",
+  "NBJ", "CAB", "CBT", "DUE", "NOV", "SDD", "MEG", "SSY", "SPP", "MSZ", "GXG", "VPE", "SZA", "EDL", "KIS", "MBA",
+  "NBO", "NYK", "LAU", "MYD", "WIL", "ASV", "MRE", "WJR", "JJM", "BEW", "MPM", "APL", "TET", "VPY", "INH", "VXC",
+  "MNC", "POL", "UEL", "VNX", "VJB", "WVB", "WDH", "MPA", "LUD", "OND", "OMD", "NDU", "ERS", "HAL", "BVC", "SID",
+  "RAI", "VXE", "SNE", "MMO", "SFL", "LAQ", "BEN", "MJI", "LTD", "AKF", "SEB", "MRA", "KRT", "PZU", "DOG", "ELF",
+  "EBD", "KSL", "UYL", "BSA", "HGA", "MGQ", "BBO", "BLW", "GLK", "GGR", "DJE", "TUN", "NBE", "MIR", "SFA", "TBJ",
+  "TOE", "LBV", "POG", "MVB", "MKU", "OYE", "GAX", "EBB", "RUA", "ULU", "KHX", "SRT", "KXO", "LVI", "LUN", "MFU",
+  "NLA", "KAA", "SLI", "FRW", "GBE", "BBK", "MUB", "SWX", "BSG", "OCS", "SSG", "GEM", "NBN", "ACC", "KMS", "TML",
+  "NYI", "TKD", "DLA", "GOU", "NSI", "MVR", "NGE", "BKO", "TOM", "GAQ", "KYS", "MZI", "BUQ", "HRE", "VFA", "KAB",
+  "ABJ", "BYK", "HGO", "SPY", "BJM", "GID", "KRE", "NDB", "NKC", "OUZ", "JUB", "MAK", "WUU", "DSS", "CSK", "ZIG",
+  "VIL", "EUN", "SMW", "BOY", "OUA", "BZV", "PNR", "HAH", "AJN", "ROB", "MLW", "ZSE", "RUN", "KGL", "KME", "BLZ",
+  "LLW", "MRU", "RRG", "NIM", "ZND", "SEZ", "PRI", "TMS", "PCP", "ASI", "HLE", "COO", "LFW", "ASM", "BJL", "JIB",
+  "CKY", "OXB", "MSU", "DZA", "FNA", "SHO", "NDJ", "BGF",
+};

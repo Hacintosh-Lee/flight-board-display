@@ -1291,13 +1291,16 @@ static void uiMenu() {
 }
 
 // ---- 机场 ----
+// 三层: 洲(加"常用"和"输入三字码") -> 国家 -> 机场。全球机场表在 fb_gbk.h(FB_REGION / FB_COUNTRY / FB_APT_ORDER)。
 static const char APTS[][4] = {
     "CAN", "PEK", "PKX", "SHA", "PVG", "SZX", "CTU", "TFU", "CKG", "KMG", "XIY", "HGH", "NKG", "WUH", "CSX", "XMN",
     "TAO", "HAK", "SYX", "URC", "TSN", "CGO", "DLC", "SHE", "HRB", "TNA", "FOC", "NNG", "KWE", "LHW", "HKG", "TPE",
 };
 #define APT_N ((int)(sizeof(APTS) / sizeof(APTS[0])))
 #define APT_PER 16
-static int aptPage = 0;
+#define CTRY_PER 10
+enum { AL_REGION, AL_COUNTRY, AL_AIRPORT };
+static int aptLevel = AL_REGION, aptRegion = 0, aptCountry = -1, aptPage = 0;  // aptCountry -1: 常用
 
 static String pager(int page, int pages, bool rescan) {
   String s = btn(4, 215, 83, 238, C_SLATE, C_WHITE, S_PREV, 12, Z_PREV);
@@ -1305,7 +1308,7 @@ static String pager(int page, int pages, bool rescan) {
   if (rescan) {
     s += btn(120, 215, 199, 238, C_SLATE, C_WHITE, S_RESCAN, 12, Z_RESCAN);
   } else {
-    char b[8];
+    char b[12];
     snprintf(b, sizeof(b), "%d/%d", page + 1, pages);
     s += cmd("SBC(%d);", C_BG);
     s += txt(16, (320 - textW(16, b)) / 2, 219, b, C_SOFT);
@@ -1313,30 +1316,119 @@ static String pager(int page, int pages, bool rescan) {
   return s;
 }
 
-static void uiAirports() {
+static int ctryOf(int region, int k) {  // 这个洲的第 k 个国家在 FB_COUNTRY 里的序号
+  for (int i = 0; i < FB_COUNTRY_N; i++)
+    if (FB_COUNTRY[i].region == region && k-- == 0) return i;
+  return -1;
+}
+
+static int ctryCount(int region) {
+  int n = 0;
+  for (int i = 0; i < FB_COUNTRY_N; i++) n += FB_COUNTRY[i].region == region;
+  return n;
+}
+
+static int aptCount() { return aptCountry < 0 ? APT_N : FB_COUNTRY[aptCountry].n; }
+static const char *aptAt(int i) { return aptCountry < 0 ? APTS[i] : FB_APT_ORDER[FB_COUNTRY[aptCountry].first + i]; }
+
+static int aptPages() {
+  if (aptLevel == AL_COUNTRY) return max(1, (ctryCount(aptRegion) + CTRY_PER - 1) / CTRY_PER);
+  return max(1, (aptCount() + APT_PER - 1) / APT_PER);
+}
+
+// 选机场第一层: 常用 + 各大洲 + 输入三字码
+static void uiRegions() {
   ui = UI_APT;
+  aptLevel = AL_REGION;
   uiFrame(S_PICK_APT);
   String s;
-  for (int i = 0; i < APT_PER; i++) {
-    int idx = aptPage * APT_PER + i;
-    if (idx >= APT_N) break;
-    int x = 4 + (i % 4) * 79, y = 38 + (i / 4) * 44;
-    bool cur = strcmp(APTS[idx], airport) == 0;
-    int bg = cur ? C_AMBER : C_ROW_B;
-    zone(x, y, x + 75, y + 39, Z_ITEM + idx);
-    s += cmd("CBOF(%d,%d,%d,%d,4,%d);SBC(%d);", x, y, x + 75, y + 39, bg, bg);
-    const char *name = fbCityGbk(APTS[idx]);
-    if (name) {
-      int sz = textW(16, name) <= 72 ? 16 : 12;
-      s += txt(sz, x + (76 - textW(sz, name)) / 2, y + (sz == 16 ? 4 : 6), name, cur ? C_INK : C_WHITE);
-    }
-    s += txt(12, x + (76 - 18) / 2, y + 24, APTS[idx], cur ? C_INK : C_AMBER);
+  for (int i = 0; i < FB_REGION_N + 2; i++) {
+    int x = 4 + (i % 3) * 105, y = 40 + (i / 3) * 58;
+    const char *name = i == 0 ? S_APT_COMMON : i <= FB_REGION_N ? FB_REGION[i - 1] : S_APT_CODE;
+    int bg = i == FB_REGION_N + 1 ? C_SLATE : C_ROW_B;
+    zone(x, y, x + 100, y + 51, Z_ITEM + i);
+    s += cmd("CBOF(%d,%d,%d,%d,5,%d);SBC(%d);", x, y, x + 100, y + 51, bg, bg);
+    s += txt(16, x + (101 - textW(16, name)) / 2, y + 18, name, C_WHITE);
     if (s.length() > 700) {
       scr(s);
       s = "";
     }
   }
-  s += pager(aptPage, (APT_N + APT_PER - 1) / APT_PER, false);
+  scr(s);
+}
+
+static void uiCountries() {
+  ui = UI_APT;
+  aptLevel = AL_COUNTRY;
+  uiFrame(FB_REGION[aptRegion]);
+  String s;
+  for (int i = 0; i < CTRY_PER; i++) {
+    int c = ctryOf(aptRegion, aptPage * CTRY_PER + i);
+    if (c < 0) break;
+    int x = 4 + (i % 2) * 157, y = 38 + (i / 2) * 35;
+    zone(x, y, x + 152, y + 31, Z_ITEM + i);
+    s += cmd("CBOF(%d,%d,%d,%d,4,%d);SBC(%d);", x, y, x + 152, y + 31, C_ROW_B, C_ROW_B);
+    const char *name = FB_COUNTRY[c].name;
+    s += txt(16, x + 5, y + 8, name, C_WHITE);
+    char n[8];
+    snprintf(n, sizeof(n), "%u", FB_COUNTRY[c].n);
+    if (textW(16, name) + 10 + textW(12, n) < 150) s += txt(12, x + 148 - textW(12, n), y + 11, n, C_DIM);
+    if (s.length() > 700) {
+      scr(s);
+      s = "";
+    }
+  }
+  s += pager(aptPage, aptPages(), false);
+  scr(s);
+}
+
+// 没有中文名的机场显示英文名: 去掉屏幕命令的语法字符, 太长截掉
+static void aptLabel(const char *code, char *out, size_t n) {
+  const char *zh = fbCityGbk(code);
+  if (zh) {
+    strlcpy(out, zh, n);
+    return;
+  }
+  const char *en = fbPlace(code, 1);
+  size_t k = 0;
+  for (; en && *en && k < 12 && k + 1 < n; en++) {
+    char c = *en;
+    out[k++] = (c == '\'' || c == ';' || c == ',' || c < 0x20 || c > 0x7E) ? ' ' : c;
+  }
+  while (k && out[k - 1] == ' ') k--;
+  out[k] = 0;
+}
+
+static void uiAirports() {
+  ui = UI_APT;
+  aptLevel = AL_AIRPORT;
+  uiFrame(aptCountry < 0 ? S_APT_COMMON : FB_COUNTRY[aptCountry].name);
+  String s;
+  for (int i = 0; i < APT_PER; i++) {
+    int idx = aptPage * APT_PER + i;
+    if (idx >= aptCount()) break;
+    const char *code = aptAt(idx);
+    int x = 4 + (i % 4) * 79, y = 38 + (i / 4) * 44;
+    bool cur = strcmp(code, airport) == 0;
+    int bg = cur ? C_AMBER : C_ROW_B;
+    zone(x, y, x + 75, y + 39, Z_ITEM + i);
+    s += cmd("CBOF(%d,%d,%d,%d,4,%d);SBC(%d);", x, y, x + 75, y + 39, bg, bg);
+    char name[40];
+    aptLabel(code, name, sizeof(name));
+    if (name[0]) {
+      int sz = textW(16, name) <= 72 ? 16 : 12;
+      int lim = 74 / (sz / 2), k = 0;  // 按字节宽截, 不切开汉字
+      while (name[k] && k + ((uint8_t)name[k] >= 0x80 ? 2 : 1) <= lim) k += (uint8_t)name[k] >= 0x80 ? 2 : 1;
+      name[k] = 0;
+      s += txt(sz, x + (76 - textW(sz, name)) / 2, y + (sz == 16 ? 4 : 6), name, cur ? C_INK : C_WHITE);
+    }
+    s += txt(12, x + (76 - 18) / 2, y + 24, code, cur ? C_INK : C_AMBER);
+    if (s.length() > 700) {
+      scr(s);
+      s = "";
+    }
+  }
+  s += pager(aptPage, aptPages(), false);
   scr(s);
 }
 
@@ -1410,6 +1502,7 @@ static void uiWifiScan() {
 // ---- 键盘 ----
 static String kbPass;
 static int kbLayer = 0;  // 0 小写 1 大写 2 数字 3 符号
+static bool kbApt = false;  // 键盘用来输机场三字码(只有大写字母, 最多 3 个)
 static const char *const KB_R1[4] = {"qwertyuiop", "QWERTYUIOP", "1234567890", "[]{}#%^*+="};
 static const char *const KB_R2[4] = {"asdfghjkl", "ASDFGHJKL", "-/:;()$&@", "_\\|~<>`&@"};
 static const char *const KB_R3[4] = {"zxcvbnm", "ZXCVBNM", ".,?!'\"_", ".,?!'\"-"};
@@ -1431,7 +1524,8 @@ static String keyCmd(const Zone &z, bool hot) {
   } else if (id == Z_SPACE) {
     s += txt(12, cx - textW(12, S_SPACE) / 2, ty + 2, S_SPACE, C_SOFT);
   } else if (id == Z_OK) {
-    s += txt(16, cx - textW(16, S_CONNECT) / 2, ty, S_CONNECT, fg);
+    const char *t = kbApt ? S_OK : S_CONNECT;
+    s += txt(16, cx - textW(16, t) / 2, ty, t, fg);
   } else {
     const char *t = id == Z_DEL ? "<-" : id == Z_LAYER ? (kbLayer < 2 ? "123" : "abc")
                   : kbLayer < 2 ? "Aa" : kbLayer == 2 ? "#+=" : "123";
@@ -1440,11 +1534,12 @@ static String keyCmd(const Zone &z, bool hot) {
   return s;
 }
 
-static void kbField() {
+static void kbField(const char *err = nullptr) {
   String s = cmd("BOXF(4,37,315,62,%d);BOX(4,37,315,62,%d);SBC(%d);", C_INK, C_LINE, C_INK);
   int n = kbPass.length();
+  if (err) s += txt(12, 300 - textW(12, err), 44, err, C_RED);
   if (!n) {
-    s += txt(12, 12, 44, S_PWD_HINT, C_DIM);
+    s += txt(12, 12, 44, kbApt ? S_CODE_HINT : S_PWD_HINT, C_DIM);
   } else {
     const char *t = kbPass.c_str() + (n > 36 ? n - 36 : 0);  // 太长只显示末尾
     s += asciiCmd(10, 42, t, C_WHITE);
@@ -1462,10 +1557,12 @@ static void kbKeys() {
     for (int i = 0; row[i]; i++) zone(x0 + i * 32, y, x0 + i * 32 + 31, y + KB_DY - 1, (uint8_t)row[i]);
   }
   int y3 = KB_Y0 + 2 * KB_DY - 1, y4 = KB_Y0 + 3 * KB_DY - 1;
-  zone(0, y3, 47, y3 + KB_DY - 1, Z_SHIFT);
+  if (!kbApt) zone(0, y3, 47, y3 + KB_DY - 1, Z_SHIFT);
   zone(272, y3, 319, y3 + KB_DY - 1, Z_DEL);
-  zone(0, y4, 63, y4 + KB_DY - 1, Z_LAYER);
-  zone(64, y4, 207, y4 + KB_DY - 1, Z_SPACE);
+  if (!kbApt) {
+    zone(0, y4, 63, y4 + KB_DY - 1, Z_LAYER);
+    zone(64, y4, 207, y4 + KB_DY - 1, Z_SPACE);
+  }
   zone(208, y4, 319, y4 + KB_DY - 1, Z_OK);
   String s;
   for (int i = 1; i < nZones; i++) {
@@ -1480,7 +1577,18 @@ static void kbKeys() {
 
 static void uiKeyboard() {
   ui = UI_KEYB;
+  kbApt = false;
   uiFrame(dispName(netSsid[netSel], 28).c_str(), true);
+  kbField();
+  kbKeys();
+}
+
+static void uiCodeEntry() {
+  ui = UI_KEYB;
+  kbApt = true;
+  kbPass = "";
+  kbLayer = 1;
+  uiFrame(S_APT_CODE);
   kbField();
   kbKeys();
 }
@@ -1566,6 +1674,14 @@ static void kbPress(const Zone &z) {
   int id = z.id;
   scr(keyCmd(z, true));
   int layer = kbLayer;
+  if (kbApt) {
+    if (id < 256 && kbPass.length() < 3) kbPass += (char)id;
+    else if (id == Z_DEL && kbPass.length()) kbPass.remove(kbPass.length() - 1);
+    kbField();
+    delay(30);
+    scr(keyCmd(z, false));
+    return;
+  }
   if (id < 256) {
     if (kbPass.length() < 63) kbPass += (char)id;
     if (kbLayer == 1) kbLayer = 0;  // 大写只管一个字母
@@ -1600,23 +1716,39 @@ static void uiTouch(int x, int y) {
   switch (ui) {
     case UI_MENU:
       if (id == Z_BACK) uiClose();
-      else if (id == Z_APT) {
-        aptPage = 0;
-        for (int i = 0; i < APT_N; i++)
-          if (!strcmp(APTS[i], airport)) aptPage = i / APT_PER;
-        uiAirports();
-      } else if (id == Z_WIFI) uiWifiScan();
+      else if (id == Z_APT) uiRegions(); else if (id == Z_WIFI) uiWifiScan();
       else if (id == Z_CAL) uiCalibrate();
       break;
     case UI_APT: {
-      int pages = (APT_N + APT_PER - 1) / APT_PER;
-      if (id == Z_BACK) uiMenu();
-      else if (id == Z_PREV) { aptPage = (aptPage + pages - 1) % pages; uiAirports(); }
-      else if (id == Z_NEXT) { aptPage = (aptPage + 1) % pages; uiAirports(); }
-      else if (id >= Z_ITEM && id < Z_ITEM + APT_N) {
-        setAirport(APTS[id - Z_ITEM]);
-        Serial.printf("$AP,%s\n", airport);  // 告诉电脑端跟着换
-        uiClose();
+      int pages = aptPages(), k = id - Z_ITEM;
+      if (aptLevel == AL_REGION) {
+        if (id == Z_BACK) uiMenu();
+        else if (k == 0) { aptCountry = -1; aptPage = 0; uiAirports(); }
+        else if (k >= 1 && k <= FB_REGION_N) { aptRegion = k - 1; aptPage = 0; uiCountries(); }
+        else if (k == FB_REGION_N + 1) uiCodeEntry();
+      } else if (aptLevel == AL_COUNTRY) {
+        if (id == Z_BACK) uiRegions();
+        else if (id == Z_PREV) { aptPage = (aptPage + pages - 1) % pages; uiCountries(); }
+        else if (id == Z_NEXT) { aptPage = (aptPage + 1) % pages; uiCountries(); }
+        else if (k >= 0 && k < CTRY_PER) {
+          int c = ctryOf(aptRegion, aptPage * CTRY_PER + k);
+          if (c >= 0) { aptCountry = c; aptPage = 0; uiAirports(); }
+        }
+      } else {
+        if (id == Z_BACK) {
+          if (aptCountry < 0) { uiRegions(); break; }
+          aptPage = 0;  // 回到这个国家所在的那一页
+          for (int i = 0, n = ctryCount(aptRegion); i < n; i++)
+            if (ctryOf(aptRegion, i) == aptCountry) aptPage = i / CTRY_PER;
+          uiCountries();
+        }
+        else if (id == Z_PREV) { aptPage = (aptPage + pages - 1) % pages; uiAirports(); }
+        else if (id == Z_NEXT) { aptPage = (aptPage + 1) % pages; uiAirports(); }
+        else if (k >= 0 && k < APT_PER && aptPage * APT_PER + k < aptCount()) {
+          setAirport(aptAt(aptPage * APT_PER + k));
+          Serial.printf("$AP,%s\n", airport);  // 告诉电脑端跟着换
+          uiClose();
+        }
       }
       break;
     }
@@ -1635,6 +1767,19 @@ static void uiTouch(int x, int y) {
       break;
     }
     case UI_KEYB:
+      if (kbApt) {
+        if (id == Z_BACK) uiRegions();
+        else if (id == Z_OK) {
+          if (kbPass.length() == 3 && fbPlace(kbPass.c_str(), 1)) {
+            setAirport(kbPass.c_str());
+            Serial.printf("$AP,%s\n", airport);
+            uiClose();
+          } else {
+            kbField(S_CODE_BAD);
+          }
+        } else kbPress(z);
+        break;
+      }
       if (id == Z_BACK) uiWifiList();
       else if (id == Z_OK) { scr(keyCmd(z, true)); uiConnect(); }
       else kbPress(z);
@@ -1771,6 +1916,10 @@ static void handleLine(char *line) {
     else if (w == 's') WiFi.setSleep(v != 0);
     else if (w == 'r') WiFi.reconnect();
     Serial.printf("$X,%c,%d,pw=%d\n", w, v, (int)WiFi.getTxPower());
+  } else if (c == 'Q') {
+    // 模拟点一下屏幕: $Q,x,y (调试触摸界面用, 不用真去点)
+    int x, y;
+    if (p && sscanf(p, "%d,%d", &x, &y) == 2) { tpX = x; tpY = y; tpPending = true; }
   } else if (c == 'Z') {
     ESP.restart();
   } else if (c == 'O') {
