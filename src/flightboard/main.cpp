@@ -2033,7 +2033,6 @@ void setup() {
 
   wifiSsid = prefs.getString("ssid", "");
   wifiPass = prefs.getString("pass", "");
-  prefs.remove("key");  // 旧版固件存的另一个数据源的密钥, 不再用了
   alKey = prefs.getString("alkey", "");
   strlcpy(airport, prefs.getString("apt", DEFAULT_AIRPORT).c_str(), sizeof(airport));
   strlcpy(aptName, prefs.getString("aname", "").c_str(), sizeof(aptName));

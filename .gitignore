@@ -1,24 +1,23 @@
+# 编译 / 运行产物
 .pio/
 .venv/
-*.log
 __pycache__/
+*.log
 .DS_Store
-api_key.txt
-include/fb_secret.h
 preview/
-assets/logos/
+
+# 数据源密钥: 自己申请, 只放本地
 airlabs_key.txt
-sources.json
-cache.json
+
+# 电脑端运行时数据
+flightboard_host/airport.txt
+flightboard_host/boards.json
+flightboard_host/cache.json
 flightboard_host/settings.json
 
-# ---- 开源时补充 ----
-# 下载来的原始数据(第三方, 体积大): 用 tools/ 里的脚本重新获取
+# 下载来的第三方原始数据: 用 tools/ 里的脚本重新获取
 assets/
+
 # 航司标志是各航司的商标: 想要的话自己跑 tools/make_logos.py 生成
 include/fb_logos.h
-# 个人设置 / 运行时数据
-flightboard_host/airport.txt
-spi_tests_unused/
-flightboard_host/boards.json
 include/fb_scr_logos.h

@@ -378,7 +378,7 @@ static int findLogo(const char *code) {
   return -1;
 }
 
-// 白底小牌。第一行和最后一行两端各少画 1 像素, 四角就是圆的(和原来的圆角徽章同形)。
+// 白底小牌。第一行和最后一行两端各少画 1 像素, 四角就是圆的。
 static void logo(int x, int y, int idx) {
   if (idx < 0 || idx >= FB_LOGO_N) return;
   const uint16_t *px = FB_LOGO_PX + (size_t)idx * FB_LOGO_W * FB_LOGO_H;
