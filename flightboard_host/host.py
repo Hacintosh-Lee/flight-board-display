@@ -30,6 +30,15 @@ import urllib.request
 from datetime import datetime, timezone
 
 import serial
+
+# 系统设了代理(比如 VPN 软件)时: Python 在 macOS 上每次请求前要判断"这个地址要不要绕过代理",
+# 判断时会先查一次 DNS; 这台 Mac 直连的 DNS 不通, 每个请求都白等 30 秒才走代理。
+# 把系统代理放进环境变量, 判断就改成只看 no_proxy 列表, 不再查 DNS。
+if not any(k.lower() in ("http_proxy", "https_proxy") for k in os.environ):
+    for _k, _v in urllib.request.getproxies().items():
+        if _k in ("http", "https"):
+            os.environ[_k + "_proxy"] = _v
+    os.environ.setdefault("no_proxy", "localhost,127.0.0.1,::1")
 import serial.tools.list_ports
 
 def _airport():

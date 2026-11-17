@@ -691,8 +691,11 @@ static void drawWaiting() {
   String s = cmd("BOXF(0,%d,319,%d,%d);SBC(%d);", HDR_H, HDR_H + 1, C_AMBER, C_BG);
   // 脱机使用时全靠这两行字知道它卡在哪一步
   const char *l1 = T(S_W_FETCH), *l2 = T(S_W_TAP);
-  bool apHint = apOn && WiFi.status() != WL_CONNECTED;
-  if (apHint) l1 = T(S_W_AP), l2 = T(S_W_AP2);
+  // 插着电脑: 数据由电脑经 USB 推过来, 这里只说"正在获取", 底栏写 USB, 不再显示 WiFi 状态
+  bool usbOn = lastUsbMs && millis() - lastUsbMs < USB_FRESH_MS;
+  bool apHint = !usbOn && apOn && WiFi.status() != WL_CONNECTED;
+  if (usbOn) l2 = "";
+  else if (apHint) l1 = T(S_W_AP), l2 = T(S_W_AP2);
   else if (!wifiSsid.length()) l1 = T(S_W_NOWIFI);
   else if (WiFi.status() != WL_CONNECTED) l1 = T(S_W_CONN);
   else if (waitState == 6) l1 = T(S_W_NOKEY), l2 = T(S_W_NOKEY2);
@@ -715,7 +718,8 @@ static void drawWaiting() {
     s += txt(12, (320 - textW(12, l2)) / 2, 132, l2, C_SOFT);
   }
   String st = "WiFi ";
-  if (!wifiSsid.length()) st += "-";
+  if (usbOn) st = "USB";
+  else if (!wifiSsid.length()) st += "-";
   else if (WiFi.status() == WL_CONNECTED) st += WiFi.localIP().toString();
   else st += "...";
   s += cmd("PL(0,%d,319,%d,%d);", FOOT_TOP, FOOT_TOP, C_LINE);
