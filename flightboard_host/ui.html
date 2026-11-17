@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>航班牌</title>
+<style>
+  :root { --bg:#fbfbfd; --text:#1d1d1f; --soft:#86868b; --hover:#f0f0f3; --chip:#ececf0;
+          --accent:#e08a00; --tint:rgba(224,138,0,.10); --ok:#30a46c; --bad:#d70015; --glow:rgba(255,184,28,.16); }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#161618; --text:#f5f5f7; --soft:#98989d; --hover:#232326; --chip:#2a2a2e;
+            --accent:#ffb81c; --tint:rgba(255,184,28,.10); --ok:#3dd68c; --bad:#ff453a; --glow:rgba(255,184,28,.10); }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  /* 顶上一点点暖色的光, 呼应航班牌的琥珀色 */
+  body { background: radial-gradient(520px 260px at 20% -60px, var(--glow), transparent 70%) var(--bg);
+         color: var(--text); font: 15px/1.4 -apple-system, "PingFang SC", sans-serif;
+         -webkit-font-smoothing: antialiased; user-select: none; cursor: default; }
+  main { display: flex; flex-direction: column; height: 100%; max-width: 520px; margin: 0 auto; padding: 52px 24px 0; }
+
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  /* 屏幕地名语种: 一个小分段开关, 放在标题右边 */
+  .seg { display: flex; background: var(--hover); border-radius: 8px; padding: 2px; flex: none; }
+  .seg button { font: 600 12px -apple-system, sans-serif; color: var(--soft); background: none; border: 0;
+                border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  .seg button.on { background: var(--bg); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.15); }
+  /* 标题一行到底: 名字放不下就缩字号、再不行省略号; 三字码紧跟名字, 语言开关固定在右边 */
+  header h1 { flex: 1; min-width: 0; }
+  h1 { margin: 0; font-size: 36px; font-weight: 700; letter-spacing: -.5px;
+       display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
+  h1 .n { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  h1 span:not(.n) { flex: none; }
+  h1 span:not(.n) { color: var(--accent); font: 600 22px ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 1px; }
+  h1.swap { animation: swap .35s ease-out; }   /* 换机场时标题轻轻落下来 */
+  @keyframes swap { from { opacity: 0; transform: translateY(-6px); } }
+
+  #status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #status { display: flex; align-items: center; gap: 8px; margin: 6px 0 22px; color: var(--soft); min-height: 21px;
+            font-variant-numeric: tabular-nums; }
+  #status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; }
+  #status.bad::before { background: var(--bad); }
+  #status.busy::before { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
+  #status:empty::before { display: none; }
+  @keyframes pulse { 50% { opacity: .25; } }
+
+  .bar { display: flex; gap: 8px; }
+  input, select { font: inherit; color: var(--text); background: var(--hover); border: 0; border-radius: 12px;
+                  outline: none; transition: box-shadow .15s; }
+  input { flex: 1; min-width: 0; font-size: 16px; padding: 11px 16px; user-select: text; }
+  select { flex: none; max-width: 42%; padding: 0 30px 0 14px; cursor: pointer; -webkit-appearance: none; appearance: none;
+           background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2398989d' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+           background-repeat: no-repeat; background-position: right 12px center; text-overflow: ellipsis; }
+  input:focus, select:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent); }
+
+  ul { flex: 1; overflow-y: auto; list-style: none; margin: 14px -8px 0; padding: 0 0 16px; }
+  li { display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 10px; }
+  li.sel { background: var(--hover); }                 /* 只有一行会亮: 鼠标指着的, 或键盘选着的 */
+  li:active { transform: scale(.985); }
+  li code { font: 600 12.5px ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .5px; background: var(--chip);
+            border-radius: 6px; padding: 3px 0; width: 44px; text-align: center; flex: none; }
+  li b { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  li i { font-style: normal; color: var(--soft); margin-left: auto; white-space: nowrap; flex: none; font-size: 13.5px; }
+  /* 当前机场: 整行染一层琥珀色, 代码块实底, 行尾一个对勾 */
+  li.cur { background: var(--tint); }
+  li.cur code { background: var(--accent); color: #1d1d1f; }
+  li.cur b { font-weight: 600; }
+  li.cur i { color: var(--accent); font-weight: 700; }
+  li.cur.pop code { animation: pop .3s ease-out; }
+  @keyframes pop { 40% { transform: scale(1.18); } }
+</style>
+<main>
+  <header>
+    <h1 id="name">&nbsp;</h1>
+    <div class="seg" id="lang"><button data-lang="zh">中</button><button data-lang="en">EN</button><button data-lang="th">ไทย</button></div>
+  </header>
+  <div id="status"></div>
+  <div class="bar">
+    <input id="q" autofocus autocomplete="off" spellcheck="false">
+    <select id="country"></select>
+  </div>
+  <ul id="list"></ul>
+</main>
+<script>
+// 一个页面, 一件事: 选机场。右上角切语种: 屏幕和这个页面一起换。
+// 接口: GET /api/state 读状态, POST /api/airport {"code":"MEL"} 换机场, POST /api/lang {"lang":"zh|en|th"} 换语种。
+const $ = id => document.getElementById(id);
+const COMMON = ["CAN","PEK","PVG","SZX","CTU","XIY","HKG","NRT","ICN","SIN","BKK","SYD","MEL","DXB","LHR","CDG","FRA","JFK","LAX"];
+const TEXT = {
+  zh: {search: "搜索机场", common: "常用", loading: "正在获取航班…", offline: "屏幕未连接", down: "后台没有运行",
+       error: "没有取到航班", ok: (d, a, t) => `${d} 出发 · ${a} 到达 · ${t} 更新`},
+  en: {search: "Search airports", common: "Popular", loading: "Loading flights…", offline: "Screen not connected", down: "Background service not running",
+       error: "No flights received", ok: (d, a, t) => `${d} departures · ${a} arrivals · updated ${t}`},
+  th: {search: "ค้นหาสนามบิน", common: "ยอดนิยม", loading: "กำลังโหลดเที่ยวบิน…", offline: "ยังไม่ได้เชื่อมต่อหน้าจอ", down: "บริการเบื้องหลังไม่ทำงาน",
+       error: "ไม่ได้รับข้อมูลเที่ยวบิน", ok: (d, a, t) => `ขาออก ${d} · ขาเข้า ${a} · อัปเดต ${t}`},
+};
+let airports = [];        // 每项 [三字码, 城市, 机场名, 国家码, 国家中文, 中文名, 规模, 英文显示名, 泰文显示名]
+let countries = [];       // [[组名{zh,en,th}, [[国家码, {zh,en,th}], ...]], ...]
+let cname = {};           // 国家码 -> {zh,en,th}
+let shown = [], sel = -1; // 列表里显示的, 和亮着的那一行(-1 = 没有)
+let current = "";         // 当前机场
+let lang = "zh";
+let pending = null;       // 刚点了、后台还没确认的: {code, until}
+let last = null;          // 上一次读到的状态, 换语种时重画用
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const hm = ts => new Date(ts * 1000).toLocaleTimeString("zh-CN", {hour: "2-digit", minute: "2-digit", hour12: false});
+const byCode = code => airports.find(a => a[0] === code);
+// 当前语种下的机场名: 没有这个语种的名字就用英文
+// 屏幕上的名字为区分同城机场带了三字码("London LGW"), 这里旁边本来就显示三字码, 去掉
+const nameOf = a => ((lang === "zh" ? a[5] : lang === "th" ? a[8] : "") || a[7] || a[1]).replace(new RegExp("\\s*" + a[0] + "$"), "");
+const countryOf = a => (cname[a[3]] || {})[lang] || a[4];
+
+function search() {
+  const q = $("q").value.trim().toLowerCase(), cc = $("country").value;
+  const pool = cc ? airports.filter(a => a[3] === cc) : airports;
+  // 选了国家没打字: 大机场在前, 同样大小里有当前语种名字的在前
+  const has = a => lang === "zh" ? !a[5] : lang === "th" ? !a[8] : 0;
+  if (!q) return cc ? pool.sort((x, y) => x[6] - y[6] || has(x) - has(y) || x[0].localeCompare(y[0])) : COMMON.map(byCode).filter(Boolean);
+  const hits = [];
+  for (const a of pool) {   // 三种语言的名字都能搜
+    const code = a[0].toLowerCase(), names = [a[5], a[1].toLowerCase(), (a[7] || "").toLowerCase(), a[8] || ""].filter(Boolean);
+    const c = cname[a[3]] || {}, cs = [a[4], (c.en || "").toLowerCase(), c.th || ""].filter(Boolean);
+    const rank = code === q ? 0 : names.includes(q) ? 1 : names.some(n => n.startsWith(q)) ? 2
+               : q.length > 1 && code.startsWith(q) ? 3 : names.some(n => n.includes(q)) || a[2].toLowerCase().includes(q) ? 4
+               : cs.some(n => n.includes(q)) ? 5 : -1;
+    if (rank >= 0) hits.push([rank * 10 + a[6], a]);
+  }
+  return hits.sort((x, y) => x[0] - y[0]).map(h => h[1]);
+}
+
+function draw() {
+  shown = search().slice(0, 200);
+  sel = Math.min(sel, shown.length - 1);
+  const inCountry = $("country").value;
+  $("list").innerHTML = shown.map((a, i) =>
+    `<li data-i="${i}" class="${i === sel ? "sel" : ""} ${a[0] === current ? "cur" : ""}">` +
+    `<code>${a[0]}</code><b>${esc(nameOf(a))}</b><i>${a[0] === current ? "✓" : inCountry ? "" : esc(countryOf(a))}</i></li>`).join("");
+}
+
+function drawCountries() {
+  const keep = $("country").value;
+  $("country").innerHTML = `<option value="">${TEXT[lang].common}</option>` + countries.map(([title, list]) => {
+    // 中文按后台排好的拼音顺序; 英文、泰文按各自的字母顺序。第一组(中国和港澳台)顺序固定
+    const sorted = lang === "zh" || title.zh === "中国" ? list : [...list].sort((x, y) => x[1][lang].localeCompare(y[1][lang], lang));
+    return `<optgroup label="${esc(title[lang])}">` + sorted.map(([cc, n]) => `<option value="${cc}">${esc(n[lang])}</option>`).join("") + "</optgroup>";
+  }).join("");
+  $("country").value = keep;
+}
+
+function setSel(i) {
+  if (i === sel) return;
+  document.querySelector("li.sel")?.classList.remove("sel");
+  sel = i;
+  if (i >= 0) document.querySelector(`li[data-i="${i}"]`)?.classList.add("sel");
+}
+
+function title() {
+  const a = byCode(current);
+  const n = a ? nameOf(a) : current;
+  $("name").innerHTML = `<span class="n" title="${esc(n)}">${esc(n)}</span><span>${current}</span>`;
+  fitTitle();
+}
+
+// 标题字号: 36 起, 名字放不下就一档档缩小, 最小 22; 再长才出省略号
+function fitTitle() {
+  const h = $("name"), n = h.querySelector(".n");
+  if (!n) return;
+  let size = 36;
+  h.style.fontSize = size + "px";
+  while (size > 22 && n.scrollWidth > n.clientWidth) h.style.fontSize = (size -= 2) + "px";
+}
+addEventListener("resize", fitTitle);
+
+function showAirport(code) {
+  if (code === current) return;
+  current = code;
+  title();
+  $("name").classList.remove("swap"); void $("name").offsetWidth; $("name").classList.add("swap");
+  draw();
+  document.querySelector("li.cur")?.classList.add("pop");
+}
+
+// 换语种: 这个页面上所有的字一起换
+function setLang(l) {
+  if (!TEXT[l]) l = "zh";
+  document.querySelectorAll("#lang button").forEach(b => b.classList.toggle("on", b.dataset.lang === l));
+  if (l === lang && $("q").placeholder) return;
+  lang = l;
+  document.documentElement.lang = {zh: "zh-CN", en: "en", th: "th"}[l];
+  $("q").placeholder = TEXT[l].search;
+  drawCountries();
+  title();
+  draw();
+  if (last) showState(last);
+}
+
+function setStatus(text, kind) { $("status").textContent = text; $("status").className = kind || ""; }
+
+function showState(s) {
+  const t = TEXT[lang];
+  if (s.status === "ok") setStatus(t.ok(s.dep, s.arr, s.updated ? hm(s.updated) : ""));
+  else if (s.status === "loading") setStatus(t.loading, "busy");
+  else if (s.status === "offline") setStatus(t.offline, "bad");
+  else if (s.status === "down") setStatus(t.down, "bad");
+  else setStatus(t.error + (s.error ? ": " + s.error : ""), "bad");
+}
+
+// 点下去马上生效: 标题、对勾立刻换, 状态显示"正在获取"; 后台确认之前不让轮询把它改回去
+function choose(a) {
+  pending = {code: a[0], until: Date.now() + 15000};
+  showAirport(a[0]);
+  showState(last = {status: "loading"});
+  fetch("/api/airport", {method: "POST", headers: {"Content-Type": "application/json", "X-Flightboard": "1"},
+                         body: JSON.stringify({code: a[0]})}).then(poll);
+}
+
+async function poll() {
+  let s;
+  try { s = await (await fetch("/api/state")).json(); } catch (e) { return showState(last = {status: "down"}); }
+  if (pending) {
+    const settled = s.airport === pending.code && s.status !== "loading";
+    if (!settled && Date.now() < pending.until && s.status !== "offline") return;
+    pending = null;
+  }
+  last = s;
+  setLang(s.lang);
+  showAirport(s.airport);
+  showState(s);
+}
+
+$("q").addEventListener("input", () => { sel = $("q").value.trim() ? 0 : -1; draw(); });   // 打了字, 回车选第一个
+$("q").addEventListener("keydown", e => {
+  if (e.key === "Enter" && shown[sel]) return choose(shown[sel]);
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  e.preventDefault();
+  setSel(Math.max(0, Math.min(shown.length - 1, sel + (e.key === "ArrowDown" ? 1 : -1))));
+  document.querySelector("li.sel")?.scrollIntoView({block: "nearest"});
+});
+$("lang").addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  setLang(b.dataset.lang);
+  if (last) last.lang = b.dataset.lang;
+  fetch("/api/lang", {method: "POST", headers: {"Content-Type": "application/json", "X-Flightboard": "1"},
+                      body: JSON.stringify({lang: b.dataset.lang})});
+});
+$("country").addEventListener("change", () => { sel = -1; draw(); $("list").scrollTop = 0; });
+$("list").addEventListener("mousemove", e => { const li = e.target.closest("li"); if (li) setSel(+li.dataset.i); });
+$("list").addEventListener("mouseleave", () => setSel(-1));
+$("list").addEventListener("click", e => { const li = e.target.closest("li"); if (li) choose(shown[+li.dataset.i]); });
+
+Promise.all([fetch("/airports.json").then(r => r.json()), fetch("/countries.json").then(r => r.json())]).then(([a, c]) => {
+  airports = a;
+  countries = c;
+  for (const [, list] of c) for (const [cc, n] of list) cname[cc] = n;
+  drawCountries(); title(); draw();
+});
+setLang("zh");
+poll();
+setInterval(poll, 2000);
+</script>

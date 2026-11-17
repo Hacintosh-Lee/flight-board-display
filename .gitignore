@@ -1,0 +1,24 @@
+.pio/
+.venv/
+*.log
+__pycache__/
+.DS_Store
+api_key.txt
+include/fb_secret.h
+preview/
+assets/logos/
+airlabs_key.txt
+sources.json
+cache.json
+flightboard_host/settings.json
+
+# ---- 开源时补充 ----
+# 下载来的原始数据(第三方, 体积大): 用 tools/ 里的脚本重新获取
+assets/
+# 用 macOS 自带字体渲染的字库: 字体不能分发, 自己在 Mac 上跑 tools/make_font.py 生成
+include/fb_font.h
+# 航司标志是各航司的商标: 想要的话自己跑 tools/make_logos.py 生成
+include/fb_logos.h
+# 个人设置 / 运行时数据
+flightboard_host/airport.txt
+spi_tests_unused/
