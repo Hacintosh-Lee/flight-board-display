@@ -1916,10 +1916,6 @@ static void handleLine(char *line) {
     else if (w == 's') WiFi.setSleep(v != 0);
     else if (w == 'r') WiFi.reconnect();
     Serial.printf("$X,%c,%d,pw=%d\n", w, v, (int)WiFi.getTxPower());
-  } else if (c == 'Q') {
-    // 模拟点一下屏幕: $Q,x,y (调试触摸界面用, 不用真去点)
-    int x, y;
-    if (p && sscanf(p, "%d,%d", &x, &y) == 2) { tpX = x; tpY = y; tpPending = true; }
   } else if (c == 'Z') {
     ESP.restart();
   } else if (c == 'O') {
