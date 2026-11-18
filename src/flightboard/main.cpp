@@ -59,6 +59,8 @@ enum {
   C_SOFT = 13,   // 比白暗一档
   C_ORANGE = 14,
   C_SCAN = 15,   // 扫描刷新时的行高亮
+  C_CLK1 = 16,   // 串口屏平滑时钟的两档过渡色: 白字在顶栏底色上的 1/3、2/3 混合
+  C_CLK2 = 17,
   // 航司品牌色
   B_RED = 20, B_MAROON, B_BLUE, B_NAVY, B_SKY, B_GREEN, B_TEAL, B_ORANGE, B_GOLD, B_PURPLE, B_GREY, B_YELLOW,
 };
@@ -69,6 +71,7 @@ static const PalEntry PALETTE[] = {
     {C_AMBER, 0xFFC107}, {C_WHITE, 0xFFFFFF}, {C_DIM, 0x7C8798},   {C_LINE, 0x26324A},
     {C_SLATE, 0x24324C}, {C_GREEN, 0x22C55E}, {C_RED, 0xE5343A},   {C_CYAN, 0x38BDF8},
     {C_INK, 0x0A0F1A},   {C_SOFT, 0xC9D3E0},  {C_ORANGE, 0xFF8A1F}, {C_SCAN, 0x1F4C8F},
+    {C_CLK1, 0x5F7395},  {C_CLK2, 0xAFB9CA},
     {B_RED, 0xD7141A},   {B_MAROON, 0x7A1232}, {B_BLUE, 0x0A66C2},  {B_NAVY, 0x14306E},
     {B_SKY, 0x2FA7E0},   {B_GREEN, 0x0E9F4F},  {B_TEAL, 0x0B6B66},  {B_ORANGE, 0xF26B1D},
     {B_GOLD, 0xE5B020},  {B_PURPLE, 0x5B2A86}, {B_GREY, 0x4A5568},  {B_YELLOW, 0xFFD400},
@@ -404,12 +407,14 @@ static void sendPalette() {
   if (s.length()) scr(s);
 }
 
+static char shownClk[6] = "";  // 串口屏上时钟现在画着的字; 清屏后置空, 下次整块重画
 static int scrDir = SCR_DIR;  // 串口屏方向: -1 用屏幕自己存的; 0 横屏; 2 横屏倒立($O 设置, 存 flash)
 
 static void screenInit() {
   for (int i = 0; i < 5; i++) {
     String s = scrDir >= 0 ? cmd("DR%d;", scrDir) : String();
     s += "CLS(0);";
+    shownClk[0] = 0;
     if (scr(s, 1000)) break;
     delay(400);
   }
@@ -500,15 +505,73 @@ static uint32_t fnv(const String &s) {
   return h;
 }
 
-static String clockCmd() {
+#ifdef DISPLAY_TFT
+static String clockCmd(bool full = false) {
   char clk[6] = "--:--";
   uint32_t now = nowEpoch();
   if (now) hhmm(now, clk);
-  // 16 点阵放大 2x2 = 32px 高, 正好撑满顶栏
+  // 16 点阵放大 2x2 = 32px 高, 正好撑满顶栏(TFT 版把这条换成 32px 平滑字)
   String s = cmd("BOXF(%d,0,319,%d,%d);SBC(%d);", CLOCK_X - 4, HDR_H - 1, C_HDR, C_HDR);
   s += cmd("DSD(16,%d,0,'%s',2,2,%d);", CLOCK_X, clk, C_WHITE);
   return s;
 }
+#else
+// 串口屏的时钟不用屏幕自带的放大点阵字, 而是把 TFT 版的 32px 平滑字(FB_ASC32, 16 级灰度)
+// 量化成 3 档(过渡色 1、过渡色 2、白), 每档的横向连续段上下合并成矩形, 用 BOXF 画出来。
+// 一个数字约 45 个矩形、1KB; 每分钟通常只变一位, 只重画变了的那一格。
+static String clockCmd(bool full = false) {
+  char clk[6] = "--:--";
+  uint32_t now = nowEpoch();
+  if (now) hhmm(now, clk);
+  if (full) shownClk[0] = 0;
+  String s = "\n";
+  if (!shownClk[0]) s += cmd("BOXF(%d,0,319,%d,%d);", CLOCK_X - 4, HDR_H - 1, C_HDR);
+  static const uint8_t LV[3] = {C_CLK1, C_CLK2, C_WHITE};
+  int nOut = 0;
+  char b[40];
+  for (int i = 0; i < 5; i++) {
+    if (shownClk[0] && clk[i] == shownClk[i]) continue;
+    int x = CLOCK_X + i * 16;
+    if (shownClk[0]) s += cmd("BOXF(%d,0,%d,%d,%d);", x, x + 15, HDR_H - 1, C_HDR);
+    const uint8_t *g = FB_ASC32 + (clk[i] - 0x20) * 8 * 32;
+    struct Run { int8_t x1, x2, lv, y1; bool live; };
+    Run act[16];
+    int nAct = 0;
+    for (int r = 0; r <= 32; r++) {
+      for (int k = 0; k < nAct; k++) act[k].live = false;
+      int c = 0, prev = 0, c0 = 0;
+      while (r < 32 && c <= 16) {
+        int v = 0;
+        if (c < 16) {
+          uint8_t p = pgm_read_byte(g + r * 8 + c / 2);
+          v = (c & 1) ? (p & 15) : (p >> 4);
+          v = v < 3 ? 0 : v < 8 ? 1 : v < 13 ? 2 : 3;
+        }
+        if (v != prev) {
+          if (prev) {  // 收一段 [c0, c-1], 档位 prev
+            int k = 0;
+            while (k < nAct && !(act[k].x1 == c0 && act[k].x2 == c - 1 && act[k].lv == prev && !act[k].live)) k++;
+            if (k < nAct) act[k].live = true;
+            else if (nAct < 16) act[nAct++] = {(int8_t)c0, (int8_t)(c - 1), (int8_t)prev, (int8_t)r, true};
+          }
+          c0 = c;
+          prev = v;
+        }
+        c++;
+      }
+      for (int k = 0; k < nAct;) {  // 这一行没接上的就收尾
+        if (act[k].live) { k++; continue; }
+        snprintf(b, sizeof(b), "BOXF(%d,%d,%d,%d,%d);", x + act[k].x1, act[k].y1, x + act[k].x2, r - 1, LV[act[k].lv - 1]);
+        s += b;
+        if (++nOut % 20 == 0) s += '\n';
+        act[k] = act[--nAct];
+      }
+    }
+  }
+  memcpy(shownClk, clk, 6);
+  return s;
+}
+#endif
 
 static void drawHeader(int kind) {
   // [出发] 广州 CAN  DEPARTURES                 18:21
@@ -552,7 +615,7 @@ static void drawHeader(int kind) {
     s += txt(12, x, 12, en, C_SOFT);
     s += langCmd(nameLang);
   }
-  s += clockCmd();
+  s += clockCmd();  // 时钟在顶栏底块右边, 换页不碰它; 只有清过屏才整块重画
   scr(s);
   shownMin = curMinute();
 }
@@ -780,6 +843,7 @@ static void drawPage(int kind, int page) {
   scr("TPN(1);");  // 触摸: 返回坐标模式 (CLS 会把触摸关掉, 所以每页都开一次)
   if (needCls) {
     scr(langCmd(nameLang) + "CLS(0);");
+    shownClk[0] = 0;
     needCls = false;
     shownKind = -1;
     footSig = 0;
@@ -799,6 +863,7 @@ static int waitState = -1;  // 取数状态(F_*), 由 WiFi 取数那边更新
 static void drawWaiting() {
   sendPalette();
   scr(langCmd(nameLang) + "CLS(0);TPN(1);");
+  shownClk[0] = 0;
   drawHeader(0);
   String s = cmd("BOXF(0,%d,319,%d,%d);SBC(%d);", HDR_H, HDR_H + 1, C_AMBER, C_BG);
   // 脱机使用时全靠这两行字知道它卡在哪一步
@@ -1275,6 +1340,7 @@ static void uiFrame(const char *title, bool ascii = false) {
   nZones = 0;
   scrTh = false;  // 设置菜单永远是中文
   sendPalette();
+  shownClk[0] = 0;
   String s = "CLS(0);TPN(1);";
   s += cmd("BOXF(0,0,319,%d,%d);BOXF(0,%d,319,%d,%d);SBC(%d);", HDR_H - 1, C_HDR, HDR_H, HDR_H + 1,
            C_AMBER, C_HDR);
