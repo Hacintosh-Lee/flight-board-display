@@ -2,7 +2,8 @@
 // 这样版面代码(main.cpp)一行不用改, 串口屏版和 TFT 版共用同一套界面。
 //
 // 屏: 从蓝牙终端上拆下来的 2.4 寸 ST7789V, 240x320, 横放当 320x240 用。
-// 接线: SCL=GPIO2 SDA=GPIO3 DC=GPIO4 RES=GPIO5 CS=GPIO7, 3.3V, 背光常亮。
+// 接线: SCL=GPIO2 SDA=GPIO3 DC=GPIO4 RES=GPIO5 CS=GPIO7, 3.3V。
+// 3.3 寸 ST7789 模块(同样 320x240)接法相同, 背光 BLK 接 GPIO6; 2.4 寸那块背光常亮, 不接这根。
 // 这块屏的脾气: 要开反色(0x21); 硬复位之后不能再发软复位(0x01), 否则后面的命令全不认。
 #pragma once
 #include <Arduino.h>
@@ -27,6 +28,7 @@ static const uint16_t FB_LOGO_PX[1] PROGMEM = {0};
 #define TFT_DC 4
 #define TFT_RST 5
 #define TFT_CS 7
+#define TFT_BL 6
 #define TFT_HZ 26000000
 #define TFT_W 320
 #define TFT_H 240
@@ -92,6 +94,7 @@ static void begin(uint8_t rot) {
   wcmd(0x13);
   fillRect(0, 0, TFT_W, TFT_H, 0);
   wcmd(0x29);                      // 开显示
+  pinMode(TFT_BL, OUTPUT); digitalWrite(TFT_BL, HIGH);  // 清完屏再开背光, 不闪花屏
 }
 
 // ---------- 图形 ----------
