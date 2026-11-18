@@ -9,6 +9,7 @@
 #include <SPI.h>
 
 #include "fb_font.h"  // tools/make_font.py 用开源字体生成, 随仓库分发
+#include "thai.h"
 // 航司标志是各航司的商标, 不进仓库; 想要的话运行 tools/make_logos.py 自己生成。
 // 没有的时候固件照样能编译, 航班行里用彩色徽章(航司两字码)代替标志。
 #if __has_include("fb_logos.h")
@@ -175,87 +176,10 @@ static const uint8_t *hanzi(int size, uint16_t code) {
 }
 
 // ---------- 泰文 ----------
-// 规则和 tools/make_font.py 的说明一致: 字母按字宽排开; 上下符号不占宽度, 右边缘对齐前一个字母
-// (ป ฝ ฟ ฬ 再往左让 2 像素); 声调跟在上方元音后面时用抬高的那套。整行先在内存里合成再一次画出,
-// 泰文比汉字高, 往上多占 3 行, 没有笔画的行不画(不会盖掉上面的东西)。
-static inline bool thMark(uint16_t cp) { return cp == 0x0E31 || (cp >= 0x0E34 && cp <= 0x0E3A) || (cp >= 0x0E47 && cp <= 0x0E4E); }
-static inline bool thUpper(uint16_t cp) { return cp == 0x0E31 || (cp >= 0x0E34 && cp <= 0x0E37) || cp == 0x0E47 || cp == 0x0E4D; }
-static inline bool thTall(uint16_t cp) { return cp == 0x0E1B || cp == 0x0E1D || cp == 0x0E1F || cp == 0x0E2C; }
-
-static int thaiWidth(int size, const char *s, int n = -1) {
-  const uint8_t *adv = size == 16 ? FB_TH16_ADV : FB_TH12_ADV;
-  int w = 0;
-  for (int i = 0; n < 0 ? s[i] != 0 : i < n; i++) {
-    uint8_t b = (uint8_t)s[i];
-    if (b < 0x80) w += size / 2;
-    else if (b >= 0xA1 && b <= 0xFB) w += pgm_read_byte(&adv[b == 0xD3 ? 0x0E32 - 0x0E01 : b - 0xA1]);
-  }
-  return w;
-}
-
-static uint8_t thLine[20][TFT_W];  // 一行泰文的灰度(0..15)
-
-static void thPut(int size, int idx, int gx) {
-  int gw = size == 16 ? FB_TH_GW16 : FB_TH_GW12, h = size + 4, stride = (gw + 1) / 2;
-  const uint8_t *g = (size == 16 ? FB_TH16 : FB_TH12) + (size_t)idx * stride * h;
-  for (int r = 0; r < h; r++)
-    for (int c = 0; c < gw; c++) {
-      int X = gx + c;
-      if (X < 0 || X >= TFT_W) continue;
-      uint8_t v = pgm_read_byte(g + r * stride + c / 2);
-      uint8_t a = (c & 1) ? (v & 15) : (v >> 4);
-      if (a > thLine[r][X]) thLine[r][X] = a;
-    }
-}
-
+// 排版在 thai.h(和串口屏共用)。泰文比汉字高, 往上多占 3 行, 多出来的行没有笔画就不画(不会盖掉上面的东西)。
 static void thaiText(int size, int x, int y, const char *s, int n, uint16_t fg) {
   int h = size + 4;
-  const uint8_t *adv = size == 16 ? FB_TH16_ADV : FB_TH12_ADV, *ink = size == 16 ? FB_TH16_INK : FB_TH12_INK;
-  memset(thLine, 0, sizeof(thLine));
-  int pen = 0, baseX = -1, baseInk = 0;
-  uint16_t baseCp = 0;
-  bool upper = false;
-  auto mark = [&](int idx) {
-    if (baseX < 0) return;
-    thPut(size, idx, baseX + baseInk - pgm_read_byte(&ink[idx]) - (thTall(baseCp) ? 2 : 0));
-  };
-  for (int i = 0; i < n && pen < TFT_W; i++) {
-    uint8_t b = (uint8_t)s[i];
-    if (b < 0x80) {  // 夹在泰文里的数字、空格、点: 用英文字模
-      uint8_t c = (b < 0x20 || b > 0x7E) ? '?' : b;
-      int cw = size / 2, stride = (cw + 1) / 2;
-      const uint8_t *g = size == 12 ? FB_ASC12 + (c - 0x20) * 3 * 12 : FB_ASC16 + (c - 0x20) * 4 * 16;
-      for (int r = 0; r < size; r++)
-        for (int k = 0; k < cw && pen + k < TFT_W; k++) {
-          uint8_t v = pgm_read_byte(g + r * stride + k / 2);
-          uint8_t a = (k & 1) ? (v & 15) : (v >> 4);
-          if (a > thLine[r + 3][pen + k]) thLine[r + 3][pen + k] = a;
-        }
-      pen += cw;
-      baseX = -1;
-      continue;
-    }
-    if (b < 0xA1 || b > 0xFB) continue;
-    uint16_t cp = b - 0xA1 + 0x0E01;
-    int idx = cp - 0x0E01;
-    if (cp == 0x0E33) {  // ำ = ํ 叠在前一个字母上 + า
-      mark(0x0E4D - 0x0E01);
-      cp = 0x0E32;
-      idx = cp - 0x0E01;
-    }
-    if (thMark(cp)) {
-      if (upper && cp >= 0x0E48 && cp <= 0x0E4C) idx = 91 + (cp - 0x0E48);
-      mark(idx);
-      upper = upper || thUpper(cp);
-    } else {
-      thPut(size, idx, pen);
-      baseX = pen;
-      baseInk = pgm_read_byte(&ink[idx]);
-      baseCp = cp;
-      upper = false;
-      pen += pgm_read_byte(&adv[idx]);
-    }
-  }
+  int pen = thaiCompose(size, s, n);
   if (pen > TFT_W - x) pen = TFT_W - x;
   if (pen <= 0) return;
   uint16_t lut[16];

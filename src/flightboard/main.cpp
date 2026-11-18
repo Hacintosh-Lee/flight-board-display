@@ -26,6 +26,8 @@
 // 界面代码始终生成串口屏的命令行, TFT 版只是在本机把这些命令画出来。
 #ifdef DISPLAY_TFT
 #include "tft.h"
+#else
+#include "thai.h"  // 串口屏没有泰文字库: 泰文用彩屏同一份字模排好, 拆成矩形画上去
 #endif
 
 #define SCR_TX 21
@@ -180,12 +182,8 @@ static char apName[24] = "FlightBoard";
 static char airport[4] = DEFAULT_AIRPORT;
 static char aptName[21] = "";
 static uint8_t nameLang = 0;   // 屏幕语种: 0 中文 / 1 英文 / 2 泰文(只有 TFT 彩屏能显示); 电脑端 $C 设置, 存 flash
-// 界面文字按语种取: T(S_DEP) -> 出发 / Departures / ขาออก。串口屏没有泰文字库, 泰文模式下用英文。
-#ifdef DISPLAY_TFT
+// 界面文字按语种取: T(S_DEP) -> 出发 / Departures / ขาออก
 #define LANGI (nameLang)
-#else
-#define LANGI (nameLang > 1 ? 1 : nameLang)
-#endif
 #define T(k) (k##_L[LANGI])  // 机场表里没有中文名的机场: 电脑端给的英文城市名, 顶栏上用
 static bool ntpStarted = false;
 static uint32_t lastUsbMs = 0, nextFetchMs = 0;
@@ -307,7 +305,67 @@ static void clean(char *s) {
     if (*s == '\'' || *s == ';' || (uint8_t)*s < 0x20) *s = ' ';
 }
 
+// 正在生成的命令里文字按什么解释: 泰文模式下航班牌上的非 ASCII 字节是 TIS-620 泰文,
+// 设置菜单里的仍是 GBK 中文。跟着命令流里的 LANG(n) 走, 用 langCmd() 切换。
+static bool scrTh = false;
+
+static String langCmd(int n) {
+  scrTh = n == 2;
+  char b[12];
+  snprintf(b, sizeof(b), "LANG(%d);", n);
+  return String(b);
+}
+
+#ifndef DISPLAY_TFT
+static bool hasThai(const char *t) {
+  for (; *t; t++)
+    if ((uint8_t)*t >= 0xA1 && (uint8_t)*t <= 0xFB) return true;
+  return false;
+}
+
+// 泰文: 排进 thLine 后按灰度取阈值, 每行的连续笔画段和上一行完全一样就往下接, 拼成矩形。
+// 只画笔画不画底, 底色由调用方先铺好(行底、顶栏都是先 BOXF 再写字)。每 20 个矩形断一次行,
+// scr() 按 '\n' 分开发, 不会超过屏幕 1024 字节的命令缓冲。
+static String thaiCmd(int size, int x, int y, const char *text, int color) {
+  int w = thaiCompose(size, text, strlen(text));
+  if (w > 320 - x) w = 320 - x;
+  struct Run { int16_t x1, x2, y1; bool live; };
+  static Run act[80];
+  int nAct = 0, nOut = 0;
+  const uint8_t on = size == 12 ? 4 : 6;  // 灰度阈值: 小字笔画细, 阈值低一点才不断笔
+  String s = "\n";  // 和前面的命令分开, 免得拼成一行太长
+  char b[40];
+  auto emit = [&](const Run &r, int yEnd) {
+    snprintf(b, sizeof(b), "BOXF(%d,%d,%d,%d,%d);", x + r.x1, y - 3 + r.y1, x + r.x2, y - 3 + yEnd, color);
+    s += b;
+    if (++nOut % 20 == 0) s += '\n';
+  };
+  for (int r = 0; r <= size + 4; r++) {
+    for (int i = 0; i < nAct; i++) act[i].live = false;
+    int c = 0;
+    while (r < size + 4 && c < w) {
+      if (thLine[r][c] < on) { c++; continue; }
+      int c0 = c;
+      while (c < w && thLine[r][c] >= on) c++;
+      int i = 0;
+      while (i < nAct && !(act[i].x1 == c0 && act[i].x2 == c - 1 && !act[i].live)) i++;
+      if (i < nAct) act[i].live = true;
+      else if (nAct < 80) act[nAct++] = {(int16_t)c0, (int16_t)(c - 1), (int16_t)r, true};
+    }
+    for (int i = 0; i < nAct;) {  // 这一行没接上的就收尾
+      if (act[i].live) { i++; continue; }
+      emit(act[i], r - 1);
+      act[i] = act[--nAct];
+    }
+  }
+  return s;
+}
+#endif
+
 static String txt(int size, int x, int y, const char *text, int color) {
+#ifndef DISPLAY_TFT
+  if (scrTh && hasThai(text)) return thaiCmd(size, x, y, text, color);
+#endif
   String s = size == 12 ? "DS12(" : "DS16(";
   s += x; s += ','; s += y; s += ",'"; s += text; s += "',"; s += color; s += ");";
   return s;
@@ -328,6 +386,7 @@ static int textW(int size, const char *s) {
 #ifdef DISPLAY_TFT
   return tft::textWidth(size, s);
 #else
+  if (scrTh && hasThai(s)) return thaiWidth(size, s);
   return (int)strlen(s) * size / 2;
 #endif
 }
@@ -489,9 +548,9 @@ static void drawHeader(int kind) {
   // 中文、泰文模式下再配一行英文小字, 和真机场的双语大屏一样; 英文模式不重复
   const char *en = kind == 0 ? "DEPARTURES" : "ARRIVALS";
   if (LANGI != 1 && x + (int)strlen(en) * 6 <= CLOCK_X - 6) {  // 全大写, 按等宽字算
-    s += "LANG(1);";  // 这几个字母按英文画
+    s += langCmd(1);  // 这几个字母按英文画
     s += txt(12, x, 12, en, C_SOFT);
-    s += cmd("LANG(%d);", nameLang);
+    s += langCmd(nameLang);
   }
   s += clockCmd();
   scr(s);
@@ -714,12 +773,13 @@ static void drawFooter(int kind, int page, int pages) {
 }
 
 static void drawPage(int kind, int page) {
+  scrTh = nameLang == 2;
   // 每次翻页都重发调色板: 颜色号只存在屏幕内存里, 屏幕掉电或某条 SCC 传坏了
   // 颜色就会一直错下去。不清屏以后没有别的机会纠正, 所以在这里顺手发一遍(约 0.1 秒)。
   sendPalette();
   scr("TPN(1);");  // 触摸: 返回坐标模式 (CLS 会把触摸关掉, 所以每页都开一次)
   if (needCls) {
-    scr(cmd("LANG(%d);CLS(0);", nameLang));
+    scr(langCmd(nameLang) + "CLS(0);");
     needCls = false;
     shownKind = -1;
     footSig = 0;
@@ -738,7 +798,7 @@ static void drawPage(int kind, int page) {
 static int waitState = -1;  // 取数状态(F_*), 由 WiFi 取数那边更新
 static void drawWaiting() {
   sendPalette();
-  scr(cmd("LANG(%d);CLS(0);TPN(1);", nameLang));
+  scr(langCmd(nameLang) + "CLS(0);TPN(1);");
   drawHeader(0);
   String s = cmd("BOXF(0,%d,319,%d,%d);SBC(%d);", HDR_H, HDR_H + 1, C_AMBER, C_BG);
   // 脱机使用时全靠这两行字知道它卡在哪一步
@@ -761,9 +821,9 @@ static void drawWaiting() {
   if (apHint) {
     // 用手机连接这个 WiFi / FlightBoard-XXXX / 然后打开 192.168.4.1
     s += txt(16, (320 - textW(16, l1)) / 2, 76, l1, C_AMBER);
-    s += "LANG(1);";
+    s += langCmd(1);
     s += txt(16, (320 - textW(16, apName)) / 2, 108, apName, C_WHITE);
-    s += cmd("LANG(%d);", nameLang);
+    s += langCmd(nameLang);
     s += txt(16, (320 - textW(16, l2)) / 2, 140, l2, C_SOFT);
   } else {
     s += txt(16, (320 - textW(16, l1)) / 2, 96, l1, waitState >= 1 && waitState <= 4 ? C_ORANGE : C_AMBER);
@@ -1213,6 +1273,7 @@ static String btn(int x1, int y1, int x2, int y2, int bg, int fg, const char *la
 // 清屏 + 顶栏(标题, 右上角"返回")。CLS 会关掉触摸, 所以紧跟着重新打开。
 static void uiFrame(const char *title, bool ascii = false) {
   nZones = 0;
+  scrTh = false;  // 设置菜单永远是中文
   sendPalette();
   String s = "CLS(0);TPN(1);";
   s += cmd("BOXF(0,0,319,%d,%d);BOXF(0,%d,319,%d,%d);SBC(%d);", HDR_H - 1, C_HDR, HDR_H, HDR_H + 1,
@@ -1815,7 +1876,7 @@ static void handleLine(char *line) {
 #else
     const int tftScreen = 0;
 #endif
-    Serial.printf("$ID,flightboard,2,wifi=%d,ip=%s,dep=%d,arr=%d,key=%d,apt=%s,tft=%d,al=%d,ap=%d\n",
+    Serial.printf("$ID,flightboard,2,wifi=%d,ip=%s,dep=%d,arr=%d,key=%d,apt=%s,tft=%d,al=%d,ap=%d,th=1\n",
                   wifiSsid.length() ? (WiFi.status() == WL_CONNECTED ? 2 : 1) : 0,
                   WiFi.localIP().toString().c_str(), boards[0].n, boards[1].n,
                   alKey.length() ? 1 : 0, airport, tftScreen, alKey.length() ? 1 : 0, apOn ? 1 : 0);

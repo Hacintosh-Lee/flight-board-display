@@ -98,7 +98,7 @@ CMDQ = queue.Queue()                # 页面发来的操作, 主循环醒来就�
 SETTINGS_FILE = os.path.join(_HERE, "settings.json")
 SETTINGS = dict({"lang": "zh"}, **load_json(SETTINGS_FILE, {}))   # lang: 屏幕和页面的语种 zh / en / th
 LANGS = ("zh", "en", "th")
-BOARD = {"tft": False}  # 连着的屏幕是不是 TFT 彩屏(只有它有泰文字库)
+BOARD = {"tft": False, "th": False}  # 连着的屏幕: 是不是 TFT 彩屏 / 能不能显示泰文
 # status: offline 屏幕没连 / loading 正在取数 / ok 有数据 / error 取数失败(error 里是原因)
 STATE = {"connected": False, "status": "offline", "error": "", "dep": 0, "arr": 0, "updated": 0}
 
@@ -120,7 +120,7 @@ def city_en(code, n=14):
 def screen_lang():
     """屏幕实际用的语种: 串口屏没有泰文字库, 泰文退回英文"""
     lang = SETTINGS["lang"]
-    return "en" if lang == "th" and not BOARD["tft"] else lang
+    return "en" if lang == "th" and not BOARD["th"] else lang
 
 
 def place(code):
@@ -511,6 +511,7 @@ def run(once=False):
                     continue
                 log("已连接 %s  %s" % (dev, ident))
                 BOARD["tft"] = ",tft=1" in ident
+                BOARD["th"] = BOARD["tft"] or ",th=1" in ident  # 能不能显示泰文(旧串口屏固件不能)
                 # 机场以电脑为准: 板子里存的(可能是很久以前的)机场和电脑上的不一样, 就改成电脑上的。
                 # 几块板子轮流插拔时, 不会因为某块板子存着旧机场把电脑的设置改掉、白扣额度
                 was = board_airport(ident)
